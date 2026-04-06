@@ -1,0 +1,7 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+cryptography==42.0.5
+requests==2.31.0
+urllib3==2.2.1
+python-dotenv==1.0.1

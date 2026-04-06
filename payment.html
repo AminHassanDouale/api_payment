@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pay with D-Money — Scolapp</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      background: #f4f6f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .card {
+      background: #fff; border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      padding: 40px 36px; width: 100%; max-width: 460px;
+    }
+    .logo { font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 6px; }
+    .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 28px; }
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 6px; }
+    input {
+      width: 100%; padding: 10px 14px;
+      border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 15px; color: #111827; outline: none; transition: border-color .2s;
+    }
+    input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.10); }
+    .summary {
+      background: #f9fafb; border: 1px solid #e5e7eb;
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 24px;
+    }
+    .summary-row {
+      display: flex; justify-content: space-between;
+      font-size: 14px; color: #374151; margin-bottom: 6px;
+    }
+    .summary-row:last-child { margin-bottom: 0; }
+    .summary-row.total {
+      font-weight: 600; font-size: 16px; color: #111827;
+      border-top: 1px solid #e5e7eb; padding-top: 10px; margin-top: 6px;
+    }
+    .pay-btn {
+      width: 100%; padding: 14px;
+      background: #4f46e5; color: #fff;
+      font-size: 16px; font-weight: 600;
+      border: none; border-radius: 10px; cursor: pointer;
+      transition: background .2s, transform .1s;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+    }
+    .pay-btn:hover:not(:disabled) { background: #4338ca; }
+    .pay-btn:active:not(:disabled) { transform: scale(0.98); }
+    .pay-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+      border-radius: 50%; animation: spin .7s linear infinite; display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error-msg {
+      margin-top: 14px; padding: 10px 14px;
+      background: #fef2f2; border: 1px solid #fecaca;
+      border-radius: 8px; color: #dc2626; font-size: 13px; display: none;
+    }
+    .result-box {
+      display: none; margin-top: 24px;
+      border: 1.5px solid #4f46e5; border-radius: 12px; overflow: hidden;
+    }
+    .result-header {
+      background: #4f46e5; color: #fff;
+      font-size: 13px; font-weight: 600; padding: 10px 14px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .result-header span { opacity: 0.8; font-weight: 400; font-size: 12px; }
+    .url-wrap { padding: 14px; background: #f5f3ff; }
+    .url-text {
+      font-family: monospace; font-size: 11.5px; color: #374151;
+      word-break: break-all; line-height: 1.6;
+      background: #fff; border: 1px solid #e5e7eb;
+      border-radius: 8px; padding: 10px 12px;
+      max-height: 120px; overflow-y: auto;
+      margin-bottom: 12px; user-select: all; cursor: text;
+    }
+    .result-actions { display: flex; gap: 8px; }
+    .action-btn {
+      flex: 1; padding: 10px; font-size: 14px; font-weight: 600;
+      border: none; border-radius: 8px; cursor: pointer;
+      transition: background .15s, transform .1s;
+    }
+    .action-btn:active { transform: scale(0.97); }
+    .btn-copy { background: #f3f4f6; color: #374151; }
+    .btn-copy:hover { background: #e5e7eb; }
+    .btn-copy.copied { background: #d1fae5; color: #065f46; }
+    .btn-open { background: #4f46e5; color: #fff; }
+    .btn-open:hover { background: #4338ca; }
+    .order-info {
+      padding: 10px 14px; background: #f9fafb;
+      border-top: 1px solid #e5e7eb;
+      font-size: 12px; color: #6b7280;
+      display: flex; justify-content: space-between;
+    }
+    .order-info strong { color: #374151; }
+    .secure-note { text-align: center; font-size: 12px; color: #9ca3af; margin-top: 18px; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo">Scolapp</div>
+  <div class="subtitle">Complete your payment securely via D-Money</div>
+
+  <div class="field">
+    <label>Description</label>
+    <input type="text" id="title" value="Scolarite Janvier 2026" />
+  </div>
+  <div class="field">
+    <label>Amount (DJF)</label>
+    <input type="number" id="amount" value="1000" min="1" />
+  </div>
+
+  <div class="summary">
+    <div class="summary-row"><span>Description</span><span id="s-title">Scolarite Janvier 2026</span></div>
+    <div class="summary-row"><span>Currency</span><span>DJF</span></div>
+    <div class="summary-row total"><span>Total</span><span id="s-amount">1,000 DJF</span></div>
+  </div>
+
+  <button class="pay-btn" id="pay-btn" onclick="pay()">
+    <div class="spinner" id="spinner"></div>
+    <span id="btn-text">Pay Now</span>
+  </button>
+
+  <div class="error-msg" id="error-msg"></div>
+
+  <div class="result-box" id="result-box">
+    <div class="result-header">
+      Checkout URL generated
+      <span id="result-time"></span>
+    </div>
+    <div class="url-wrap">
+      <div class="url-text" id="url-text"></div>
+      <div class="result-actions">
+        <button class="action-btn btn-copy" id="copy-btn" onclick="copyUrl()">Copy URL</button>
+        <button class="action-btn btn-open" onclick="openUrl()">Open Payment Page</button>
+      </div>
+    </div>
+    <div class="order-info">
+      <span>Order: <strong id="result-order-id">—</strong></span>
+      <span>Prepay: <strong id="result-prepay-id">—</strong></span>
+    </div>
+  </div>
+
+  <div class="secure-note">🔒 Secured by D-Money Payment Gateway</div>
+</div>
+
+<script>
+  // ── Detect environment automatically ──────────────────────────────────────
+  const IS_LIVE  = location.hostname === "api.scolapp.com";
+  const API_BASE = IS_LIVE ? "https://api.scolapp.com" : "http://localhost:8000";
+  const API_KEY  = "scolapp-dmoney-secret-2026";
+
+  // Notify and redirect URLs always point to api.scolapp.com — not scolapp.com
+  const NOTIFY_URL   = "https://api.scolapp.com/payment/notify";
+  const REDIRECT_URL = "https://api.scolapp.com/payment/success";
+  // ─────────────────────────────────────────────────────────────────────────
+
+  let checkoutUrl = "";
+
+  document.getElementById("title").addEventListener("input", e => {
+    document.getElementById("s-title").textContent = e.target.value || "-";
+  });
+  document.getElementById("amount").addEventListener("input", e => {
+    const n = parseFloat(e.target.value) || 0;
+    document.getElementById("s-amount").textContent = n.toLocaleString() + " DJF";
+  });
+
+  async function pay() {
+    const title   = document.getElementById("title").value.trim();
+    const amount  = parseFloat(document.getElementById("amount").value);
+    const btn     = document.getElementById("pay-btn");
+    const spinner = document.getElementById("spinner");
+    const btnText = document.getElementById("btn-text");
+    const errorEl = document.getElementById("error-msg");
+
+    if (!title)                return showError("Please enter a description.");
+    if (!amount || amount < 1) return showError("Please enter a valid amount.");
+
+    errorEl.style.display = "none";
+    document.getElementById("result-box").style.display = "none";
+    btn.disabled = true;
+    spinner.style.display = "block";
+    btnText.textContent = "Generating...";
+
+    try {
+      const resp = await fetch(`${API_BASE}/payment/create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": API_KEY,
+        },
+        body: JSON.stringify({
+          amount:       amount,
+          title:        title,
+          currency:     "DJF",
+          language:     "en",
+          notify_url:   NOTIFY_URL,
+          redirect_url: REDIRECT_URL,
+        }),
+      });
+
+      const data = await resp.json();
+      if (!resp.ok)           throw new Error(data.detail || `Server error (${resp.status})`);
+      if (!data.checkout_url) throw new Error("No checkout URL returned from server.");
+
+      checkoutUrl = data.checkout_url;
+
+      // Always show the URL on the page
+      document.getElementById("url-text").textContent         = checkoutUrl;
+      document.getElementById("result-order-id").textContent  = data.order_id  || "—";
+      document.getElementById("result-prepay-id").textContent = data.prepay_id || "—";
+      document.getElementById("result-time").textContent      = new Date().toLocaleTimeString();
+      document.getElementById("copy-btn").textContent = "Copy URL";
+      document.getElementById("copy-btn").classList.remove("copied");
+      document.getElementById("result-box").style.display = "block";
+      document.getElementById("result-box").scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+      // Automatically open — same as window.open('checkout_url') in console
+      openUrl();
+
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = "none";
+      btnText.textContent = "Pay Now";
+    }
+  }
+
+  function openUrl() {
+    if (!checkoutUrl) return;
+    // Exactly the same as typing in console: window.open('checkout_url')
+    window.open(checkoutUrl, "_blank");
+  }
+
+  function copyUrl() {
+    if (!checkoutUrl) return;
+    navigator.clipboard.writeText(checkoutUrl).then(() => {
+      const btn = document.getElementById("copy-btn");
+      btn.textContent = "Copied!";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.textContent = "Copy URL";
+        btn.classList.remove("copied");
+      }, 2000);
+    });
+  }
+
+  function showError(msg) {
+    const el = document.getElementById("error-msg");
+    el.textContent = msg;
+    el.style.display = "block";
+  }
+</script>
+
+</body>
+</html>
