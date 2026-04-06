@@ -162,3 +162,4 @@ nano /var/www/scolapp_api/.env      # edit credentials
 certbot renew                       # renew SSL
 ```
 "# api_payment" 
+"# api_payment" 
