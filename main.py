@@ -14,10 +14,13 @@ Endpoints:
   GET  /payment/failed          — failed landing page
 """
 
+import os
 import time
+import json
 import logging
 import hashlib
 from collections import defaultdict
+from datetime import datetime as dt, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, status, Path
@@ -28,6 +31,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 import re
 
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
+from sqlalchemy.orm import declarative_base, sessionmaker
+
 from dmoney_gateway import DmoneyPaymentGateway
 
 logging.basicConfig(
@@ -36,10 +42,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger("DmoneyAPI")
 
-# ── In-memory notification log (last 500 webhooks) ────────────────────────────
-# Third parties can call GET /payment/notify/{order_id} to see what D-Money sent
-_notify_log: dict = {}   # order_id → list of payloads
-MAX_NOTIFY_LOG = 500
+# ── Database ───────────────────────────────────────────────────────────────────
+_DB_URL = os.getenv("DATABASE_URL", "sqlite:///./scolapp_payments.db")
+
+if "sqlite" in _DB_URL:
+    engine = create_engine(_DB_URL, connect_args={"check_same_thread": False})
+else:
+    # MySQL — recycle connections every 30 min to avoid server-side timeout drops
+    engine = create_engine(
+        _DB_URL,
+        pool_recycle=1800,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+    )
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base         = declarative_base()
+
+
+class PaymentNotification(Base):
+    """One row per D-Money webhook call — all official webhook fields stored."""
+    __tablename__ = "payment_notifications"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    # D-Money official webhook fields
+    merch_order_id   = Column(String(64),  index=True, nullable=True)
+    payment_order_id = Column(String(64),  unique=True, nullable=True)  # idempotency key
+    appid            = Column(String(64),  nullable=True)
+    notify_time      = Column(String(32),  nullable=True)
+    merch_code       = Column(String(32),  nullable=True)
+    total_amount     = Column(String(32),  nullable=True)
+    trans_currency   = Column(String(8),   nullable=True)
+    trade_status     = Column(String(32),  nullable=True)  # Paying | Completed | Expired | Failure
+    trans_end_time   = Column(String(32),  nullable=True)
+    callback_info    = Column(Text,        nullable=True)
+    sign             = Column(Text,        nullable=True)
+    sign_type        = Column(String(32),  nullable=True)
+    notify_url       = Column(Text,        nullable=True)
+    # Meta
+    raw_payload      = Column(Text,        nullable=True)  # full JSON as received
+    received_at      = Column(DateTime,    default=lambda: dt.now(timezone.utc))
+    processed        = Column(Boolean,     default=False)
+
+
+class NotificationLog(Base):
+    """Audit trail — one row per event on an order."""
+    __tablename__ = "notification_logs"
+
+    id             = Column(Integer,  primary_key=True, index=True)
+    merch_order_id = Column(String(64), index=True, nullable=True)
+    message        = Column(Text,     nullable=False)
+    data           = Column(Text,     nullable=True)   # JSON string
+    type           = Column(String(32), default="general")
+    created_at     = Column(DateTime, default=lambda: dt.now(timezone.utc))
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -163,6 +219,8 @@ gateway: Optional[DmoneyPaymentGateway] = None
 @app.on_event("startup")
 def startup():
     global gateway
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables ready")
     gateway = DmoneyPaymentGateway()
     logger.info("Gateway ready — https://api.scolapp.com")
 
@@ -481,30 +539,68 @@ GET https://api.scolapp.com/payment/notify/{order_id}
 async def payment_notify(request: Request):
     """
     D-Money POSTs here when payment status changes.
-    Logs the payload. Third parties can read it via GET /payment/notify/{order_id}.
-    Must return { returnCode: SUCCESS, returnMsg: OK } — always.
+    Saves all webhook fields to the database immediately.
+    Idempotent: duplicate payment_order_id is silently ignored.
+    Must always return { returnCode: SUCCESS, returnMsg: OK }.
     """
     try:
-        body     = await request.json()
-        order_id = body.get("merch_order_id", "unknown")
-        status   = body.get("trade_status",   "unknown")
+        body = await request.json()
+    except Exception:
+        return {"returnCode": "SUCCESS", "returnMsg": "OK"}
 
-        logger.info(f"D-Money notify: order={order_id} status={status}")
+    merch_order_id   = body.get("merch_order_id",   "unknown")
+    payment_order_id = body.get("payment_order_id")
+    trade_status     = body.get("trade_status",      "unknown")
 
-        # Store in notify log so third parties can poll it
-        if order_id not in _notify_log:
-            _notify_log[order_id] = []
-        _notify_log[order_id].append(body)
+    logger.info(f"D-Money notify: order={merch_order_id} status={trade_status}")
 
-        # Trim log size
-        if len(_notify_log) > MAX_NOTIFY_LOG:
-            oldest = list(_notify_log.keys())[0]
-            del _notify_log[oldest]
+    db = SessionLocal()
+    try:
+        # ── Idempotency: skip if this payment_order_id was already saved ──────
+        if payment_order_id:
+            exists = db.query(PaymentNotification).filter_by(
+                payment_order_id=payment_order_id
+            ).first()
+            if exists:
+                logger.info(f"Duplicate notify ignored — payment_order_id={payment_order_id}")
+                return {"returnCode": "SUCCESS", "returnMsg": "OK"}
+
+        # ── Save notification with every D-Money webhook field ────────────────
+        notif = PaymentNotification(
+            merch_order_id   = merch_order_id,
+            payment_order_id = payment_order_id,
+            appid            = body.get("appid"),
+            notify_time      = body.get("notify_time"),
+            merch_code       = body.get("merch_code"),
+            total_amount     = body.get("total_amount"),
+            trans_currency   = body.get("trans_currency"),
+            trade_status     = trade_status,
+            trans_end_time   = body.get("trans_end_time"),
+            callback_info    = body.get("callback_info"),
+            sign             = body.get("sign"),
+            sign_type        = body.get("sign_type"),
+            notify_url       = body.get("notify_url"),
+            raw_payload      = json.dumps(body),
+        )
+        db.add(notif)
+
+        # ── Audit log entry ───────────────────────────────────────────────────
+        db.add(NotificationLog(
+            merch_order_id = merch_order_id,
+            message        = f"Payment notification received: {trade_status}",
+            data           = json.dumps(body),
+            type           = "payment_notification",
+        ))
+
+        db.commit()
+        logger.info(f"Notify saved to DB — order={merch_order_id} status={trade_status}")
 
     except Exception as e:
-        logger.warning(f"Notify parse error: {e}")
+        db.rollback()
+        logger.error(f"DB error saving notification: {e}")
+    finally:
+        db.close()
 
-    # D-Money requires this exact response — always
     return {"returnCode": "SUCCESS", "returnMsg": "OK"}
 
 
@@ -558,14 +654,33 @@ def get_notify_log(
     order_id: str = Path(..., example="ORD2026040700001",
                          description="Your order ID")
 ):
-    """Get D-Money webhook notifications received for this order_id."""
-    notifications = _notify_log.get(order_id, [])
-    return {
-        "order_id":      order_id,
-        "notifications": notifications,
-        "count":         len(notifications),
-        "latest_status": notifications[-1].get("trade_status") if notifications else None,
-    }
+    """Get all D-Money webhook notifications saved to the database for this order."""
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(PaymentNotification)
+            .filter_by(merch_order_id=order_id)
+            .order_by(PaymentNotification.received_at)
+            .all()
+        )
+        notifications = []
+        for row in rows:
+            try:
+                payload = json.loads(row.raw_payload) if row.raw_payload else {}
+            except Exception:
+                payload = {}
+            payload["_received_at"] = row.received_at.isoformat() if row.received_at else None
+            notifications.append(payload)
+
+        latest_status = rows[-1].trade_status if rows else None
+        return {
+            "order_id":      order_id,
+            "notifications": notifications,
+            "count":         len(notifications),
+            "latest_status": latest_status,
+        }
+    finally:
+        db.close()
 
 
 @app.get(
