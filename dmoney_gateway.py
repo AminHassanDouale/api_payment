@@ -1,7 +1,7 @@
 """
-D-Money Payment Gateway Integration
-Test URL:       https://pgtest.d-money.dj:38443
-Production API: https://api.scolapp.com
+D-Money Payment Gateway — Core Integration
+Test:       https://pgtest.d-money.dj:38443
+Production: https://pg.d-moneyservice.dj
 """
 
 import os, json, time, base64, secrets, string, logging, urllib.parse
@@ -21,7 +21,7 @@ _DEFAULTS = {
     "DMONEY_MERCH_CODE":    "200012",
     "DMONEY_BUSINESS_TYPE": "OnlineMerchant",
     "DMONEY_NOTIFY_URL":    "https://api.scolapp.com/payment/notify",
-    "DMONEY_REDIRECT_URL":  "https://scolapp.com/payment/success",
+    "DMONEY_REDIRECT_URL":  "https://api.scolapp.com/payment/success",
     "DMONEY_VERIFY_SSL":    "false",
     "DMONEY_TIMEOUT_SEC":   "30",
     "DMONEY_LOG_LEVEL":     "INFO",
@@ -73,8 +73,10 @@ def _cfg(key):
     return os.getenv(key, _DEFAULTS.get(key, "")).strip()
 
 
-logging.basicConfig(level=getattr(logging, _cfg("DMONEY_LOG_LEVEL"), logging.INFO),
-                    format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=getattr(logging, _cfg("DMONEY_LOG_LEVEL"), logging.INFO),
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger("DmoneyGateway")
 
 
@@ -86,41 +88,42 @@ class DmoneyPaymentGateway:
     QUERY_ORDER_PATH      = "/payment/v1/merchant/queryOrder"
     DEFAULT_CHECKOUT_BASE = "https://pgtest.d-money.dj:38443/payment/web/paygate"
 
-    _EXPIRY_FORMATS = ["%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S",
-                       "%Y-%m-%dT%H:%M:%S", "%Y/%m/%d %H:%M:%S"]
+    _EXPIRY_FORMATS = [
+        "%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S", "%Y/%m/%d %H:%M:%S",
+    ]
 
     def __init__(self):
-        self.base_url         = _cfg("DMONEY_BASE_URL").rstrip("/")
-        self.x_app_key        = _cfg("DMONEY_X_APP_KEY")
-        self.app_secret       = _cfg("DMONEY_APP_SECRET")
-        self.verify_ssl       = _cfg("DMONEY_VERIFY_SSL").lower() == "true"
-        self.appid            = _cfg("DMONEY_APPID")
-        self.merch_code       = _cfg("DMONEY_MERCH_CODE")
-        self.business_type    = _cfg("DMONEY_BUSINESS_TYPE") or "OnlineMerchant"
-        self.notify_url       = _cfg("DMONEY_NOTIFY_URL")
-        self.redirect_url     = _cfg("DMONEY_REDIRECT_URL")
+        self.base_url          = _cfg("DMONEY_BASE_URL").rstrip("/")
+        self.x_app_key         = _cfg("DMONEY_X_APP_KEY")
+        self.app_secret        = _cfg("DMONEY_APP_SECRET")
+        self.verify_ssl        = _cfg("DMONEY_VERIFY_SSL").lower() == "true"
+        self.appid             = _cfg("DMONEY_APPID")
+        self.merch_code        = _cfg("DMONEY_MERCH_CODE")
+        self.business_type     = _cfg("DMONEY_BUSINESS_TYPE") or "OnlineMerchant"
+        self.notify_url        = _cfg("DMONEY_NOTIFY_URL")
+        self.redirect_url      = _cfg("DMONEY_REDIRECT_URL")
         self.checkout_base_url = _cfg("DMONEY_CHECKOUT_BASE_URL") or self.DEFAULT_CHECKOUT_BASE
 
         missing = [k for k, v in {
-            "DMONEY_BASE_URL": self.base_url, "DMONEY_X_APP_KEY": self.x_app_key,
-            "DMONEY_APP_SECRET": self.app_secret, "DMONEY_APPID": self.appid,
-            "DMONEY_MERCH_CODE": self.merch_code, "DMONEY_NOTIFY_URL": self.notify_url,
+            "DMONEY_BASE_URL":    self.base_url,
+            "DMONEY_X_APP_KEY":   self.x_app_key,
+            "DMONEY_APP_SECRET":  self.app_secret,
+            "DMONEY_APPID":       self.appid,
+            "DMONEY_MERCH_CODE":  self.merch_code,
+            "DMONEY_NOTIFY_URL":  self.notify_url,
             "DMONEY_REDIRECT_URL": self.redirect_url,
         }.items() if not v]
         if missing:
-            raise ValueError(f"Missing required config keys: {', '.join(missing)}")
+            raise ValueError(f"Missing config: {', '.join(missing)}")
 
         if not self.verify_ssl:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            logger.warning("SSL verification is DISABLED")
 
         self._load_private_key()
         self.token: Optional[str] = None
         self.token_expiry: Optional[float] = None
-        logger.info(f"Gateway ready | base={self.base_url} | merch={self.merch_code}")
-
-    def _mask(self, v, head=8, tail=4):
-        return v if not v or len(v) <= head+tail else f"{v[:head]}...{v[-tail:]}"
+        logger.info(f"Gateway ready | {self.base_url} | merch={self.merch_code}")
 
     def _api_url(self, path):
         base = self.base_url
@@ -136,7 +139,6 @@ class DmoneyPaymentGateway:
             from dateutil import parser as dp
             return dp.parse(s).timestamp()
         except Exception: pass
-        logger.warning(f"Cannot parse expirationDate '{s}' — using +1h")
         return time.time() + 3600
 
     def _load_private_key(self):
@@ -149,8 +151,9 @@ class DmoneyPaymentGateway:
             raise ValueError(f"Failed to load private key: {e}") from e
 
     def _generate_order_id(self):
-        return "ORD" + datetime.now().strftime("%Y%m%d%H%M%S") + \
-               "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        suffix = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+        return f"ORD{ts}{suffix}"
 
     def _nonce(self, n=32):
         return "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(n))
@@ -178,8 +181,6 @@ class DmoneyPaymentGateway:
 
     def _timeout(self):
         return int(_cfg("DMONEY_TIMEOUT_SEC") or 30)
-
-    # ── Public API ────────────────────────────────────────────────────────────
 
     def get_token(self) -> Dict:
         url  = self._api_url(self.TOKEN_PATH)
@@ -261,9 +262,11 @@ class DmoneyPaymentGateway:
 
         nonce_str = self._nonce()
         timestamp = self._timestamp()
-        sign_params = {"appid": self.appid, "merch_code": self.merch_code,
-                       "method": "payment.queryorder", "nonce_str": nonce_str,
-                       "timestamp": timestamp, "version": "1.0"}
+        sign_params = {
+            "appid": self.appid, "merch_code": self.merch_code,
+            "method": "payment.queryorder", "nonce_str": nonce_str,
+            "timestamp": timestamp, "version": "1.0",
+        }
         biz = {"appid": self.appid, "merch_code": self.merch_code}
         if merch_order_id:
             sign_params["merch_order_id"] = merch_order_id
@@ -272,10 +275,12 @@ class DmoneyPaymentGateway:
             sign_params["trade_no"] = trade_no
             biz["trade_no"] = trade_no
 
-        payload = {"nonce_str": nonce_str, "method": "payment.queryorder",
-                   "version": "1.0", "sign_type": "SHA256WithRSA",
-                   "timestamp": timestamp, "sign": self._sign(sign_params),
-                   "biz_content": biz}
+        payload = {
+            "nonce_str": nonce_str, "method": "payment.queryorder",
+            "version": "1.0", "sign_type": "SHA256WithRSA",
+            "timestamp": timestamp, "sign": self._sign(sign_params),
+            "biz_content": biz,
+        }
 
         resp = requests.post(self._api_url(self.QUERY_ORDER_PATH), json=payload,
             headers={"Content-Type": "application/json",
@@ -298,17 +303,17 @@ class DmoneyPaymentGateway:
     def generate_checkout_url(self, prepay_id: str, language: str = "en") -> str:
         nonce_str = self._nonce()
         timestamp = self._timestamp()
-        sign_params = {"appid": self.appid, "merch_code": self.merch_code,
-                       "nonce_str": nonce_str, "prepay_id": prepay_id, "timestamp": timestamp}
+        sign_params = {
+            "appid": self.appid, "merch_code": self.merch_code,
+            "nonce_str": nonce_str, "prepay_id": prepay_id, "timestamp": timestamp,
+        }
         query = urllib.parse.urlencode({
             **sign_params,
             "sign": self._sign(sign_params),
             "sign_type": "SHA256WithRSA", "version": "1.0",
             "trade_type": "Checkout", "language": language,
         })
-        url = f"{self.checkout_base_url}?{query}"
-        logger.info("Checkout URL generated")
-        return url
+        return f"{self.checkout_base_url}?{query}"
 
     def create_payment(self, amount: float, title: str,
                        order_id: Optional[str] = None, currency: str = "DJF",
@@ -327,6 +332,13 @@ class DmoneyPaymentGateway:
 
         prepay_id    = biz.get("prepay_id")
         checkout_url = self.generate_checkout_url(prepay_id, language) if prepay_id else None
-        return {"success": True, "order_id": order_id, "prepay_id": prepay_id,
-                "checkout_url": checkout_url, "amount": amount,
-                "currency": currency, "raw_response": raw}
+
+        return {
+            "success":      True,
+            "order_id":     order_id,
+            "prepay_id":    prepay_id,
+            "checkout_url": checkout_url,
+            "amount":       amount,
+            "currency":     currency,
+            "raw_response": raw,
+        }

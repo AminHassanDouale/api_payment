@@ -1,5 +1,5 @@
 [Unit]
-Description=Scolapp D-Money Payment API
+Description=Scolapp D-Money Payment Gateway Interface
 After=network.target
 
 [Service]
