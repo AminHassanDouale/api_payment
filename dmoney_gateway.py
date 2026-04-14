@@ -14,17 +14,18 @@ from cryptography.hazmat.backends import default_backend
 import requests, urllib3
 
 _DEFAULTS = {
-    "DMONEY_BASE_URL":      "https://pgtest.d-money.dj:38443",
-    "DMONEY_X_APP_KEY":     "452fe2b7-4105-4fc8-b002-937d10a970b1",
-    "DMONEY_APP_SECRET":    "d5d750fdcf550a6ae2f4fd15acd1357a",
-    "DMONEY_APPID":         "1598852445107200",
-    "DMONEY_MERCH_CODE":    "200012",
-    "DMONEY_BUSINESS_TYPE": "OnlineMerchant",
-    "DMONEY_NOTIFY_URL":    "https://api.scolapp.com/payment/notify",
-    "DMONEY_REDIRECT_URL":  "https://api.scolapp.com/payment/success",
-    "DMONEY_VERIFY_SSL":    "false",
-    "DMONEY_TIMEOUT_SEC":   "30",
-    "DMONEY_LOG_LEVEL":     "INFO",
+    "DMONEY_BASE_URL":       "https://pg.d-moneyservice.dj:38443",
+    "DMONEY_QUERY_BASE_URL": "https://pg.d-money.dj:38443",
+    "DMONEY_APP_KEY":        "452fe2b7-4105-4fc8-b002-937d10a970b1",
+    "DMONEY_APP_SECRET":     "5558342c7ac592d627032db14ed51e58",
+    "DMONEY_APP_ID":         "1293049431398401",
+    "DMONEY_MERCH_CODE":     "9988",
+    "DMONEY_BUSINESS_TYPE":  "OnlineMerchant",
+    "DMONEY_NOTIFY_URL":     "https://api.scolapp.com/payment/notify",
+    "DMONEY_REDIRECT_URL":   "https://api.scolapp.com/payment/success",
+    "DMONEY_VERIFY_SSL":     "true",
+    "DMONEY_TIMEOUT_SEC":    "30",
+    "DMONEY_LOG_LEVEL":      "INFO",
 }
 
 _PRIVATE_KEY_B64 = (
@@ -86,7 +87,7 @@ class DmoneyPaymentGateway:
     TOKEN_PATH            = "/payment/v1/token"
     PREORDER_PATH         = "/payment/v1/merchant/preOrder"
     QUERY_ORDER_PATH      = "/payment/v1/merchant/queryOrder"
-    DEFAULT_CHECKOUT_BASE = "https://pgtest.d-money.dj:38443/payment/web/paygate"
+    DEFAULT_CHECKOUT_BASE = "https://pg.d-moneyservice.dj/payment/web/paygate"
 
     _EXPIRY_FORMATS = [
         "%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S",
@@ -95,10 +96,11 @@ class DmoneyPaymentGateway:
 
     def __init__(self):
         self.base_url          = _cfg("DMONEY_BASE_URL").rstrip("/")
-        self.x_app_key         = _cfg("DMONEY_X_APP_KEY")
+        self.query_base_url    = (_cfg("DMONEY_QUERY_BASE_URL") or self.base_url).rstrip("/")
+        self.x_app_key         = _cfg("DMONEY_APP_KEY")
         self.app_secret        = _cfg("DMONEY_APP_SECRET")
         self.verify_ssl        = _cfg("DMONEY_VERIFY_SSL").lower() == "true"
-        self.appid             = _cfg("DMONEY_APPID")
+        self.appid             = _cfg("DMONEY_APP_ID")
         self.merch_code        = _cfg("DMONEY_MERCH_CODE")
         self.business_type     = _cfg("DMONEY_BUSINESS_TYPE") or "OnlineMerchant"
         self.notify_url        = _cfg("DMONEY_NOTIFY_URL")
@@ -106,12 +108,12 @@ class DmoneyPaymentGateway:
         self.checkout_base_url = _cfg("DMONEY_CHECKOUT_BASE_URL") or self.DEFAULT_CHECKOUT_BASE
 
         missing = [k for k, v in {
-            "DMONEY_BASE_URL":    self.base_url,
-            "DMONEY_X_APP_KEY":   self.x_app_key,
-            "DMONEY_APP_SECRET":  self.app_secret,
-            "DMONEY_APPID":       self.appid,
-            "DMONEY_MERCH_CODE":  self.merch_code,
-            "DMONEY_NOTIFY_URL":  self.notify_url,
+            "DMONEY_BASE_URL":   self.base_url,
+            "DMONEY_APP_KEY":    self.x_app_key,
+            "DMONEY_APP_SECRET": self.app_secret,
+            "DMONEY_APP_ID":     self.appid,
+            "DMONEY_MERCH_CODE": self.merch_code,
+            "DMONEY_NOTIFY_URL": self.notify_url,
             "DMONEY_REDIRECT_URL": self.redirect_url,
         }.items() if not v]
         if missing:
@@ -131,6 +133,13 @@ class DmoneyPaymentGateway:
             base = base[:base.index(self.GATEWAY_PATH)]
         return f"{base}{self.GATEWAY_PATH}{path if path.startswith('/') else '/'+path}"
 
+    def _query_api_url(self, path):
+        """QueryOrder uses a separate base URL (pg.d-money.dj vs pg.d-moneyservice.dj)."""
+        base = self.query_base_url
+        if self.GATEWAY_PATH in base:
+            base = base[:base.index(self.GATEWAY_PATH)]
+        return f"{base}{self.GATEWAY_PATH}{path if path.startswith('/') else '/'+path}"
+
     def _parse_expiry(self, s):
         for fmt in self._EXPIRY_FORMATS:
             try: return datetime.strptime(s.strip(), fmt).timestamp()
@@ -142,7 +151,11 @@ class DmoneyPaymentGateway:
         return time.time() + 3600
 
     def _load_private_key(self):
-        b64 = os.getenv("DMONEY_PRIVATE_KEY_B64", "").strip() or _PRIVATE_KEY_B64
+        b64 = (
+            os.getenv("DMONEY_PRIVATE_KEY_B64", "").strip() or
+            os.getenv("DMONEY_PRIVATE_KEY", "").strip() or
+            _PRIVATE_KEY_B64
+        )
         try:
             self.private_key = serialization.load_der_private_key(
                 base64.b64decode(b64), password=None, backend=default_backend())
@@ -282,7 +295,7 @@ class DmoneyPaymentGateway:
             "biz_content": biz,
         }
 
-        resp = requests.post(self._api_url(self.QUERY_ORDER_PATH), json=payload,
+        resp = requests.post(self._query_api_url(self.QUERY_ORDER_PATH), json=payload,
             headers={"Content-Type": "application/json",
                      "Authorization": self.token, "X-APP-Key": self.x_app_key},
             verify=self.verify_ssl, timeout=self._timeout())
