@@ -229,29 +229,65 @@ POLL_MIN_AGE_SEC  = int(os.getenv("PENDING_POLL_MIN_AGE_SEC",  "5"))
 POLL_MAX_AGE_HRS  = int(os.getenv("PENDING_POLL_MAX_AGE_HRS",  "24"))
 
 
-def _poll_pending_payments_loop():
-    """Background thread that reconciles PENDING payments against D-Money.
-
-    D-Money's TEST sandbox doesn't always POST a server-side webhook, so we
-    catch up by calling queryOrder for every PENDING payment older than
-    POLL_MIN_AGE_SEC. Idempotent: re-running a queryOrder on a PAID order
-    is a no-op.
-    """
+def _reconcile_one_payment(db, p: "Payment") -> str:
+    """Hit D-Money queryOrder for one Payment row and update status if changed.
+    Returns the new status (or the old one if no change). Raises on D-Money error."""
+    tp = db.query(ThirdParty).filter_by(
+        id=p.third_party_id, is_active=True
+    ).first()
+    if not tp:
+        raise RuntimeError(f"no active TP for tp_id={p.third_party_id}")
+    gateway = DmoneyPaymentGateway.from_third_party(tp, decrypt)
+    data = gateway.query_order(merch_order_id=p.merch_order_id)
+    biz = data.get("biz_content") or {}
+    if isinstance(biz, str):
+        try: biz = json.loads(biz)
+        except Exception: biz = {}
+    raw_ts = biz.get("trade_status") or ""
+    new_status = _normalize_status(raw_ts)
     logger.info(
-        f"Pending-payment poller started "
+        f"queryOrder {p.merch_order_id}: D-Money trade_status={raw_ts!r} "
+        f"→ canonical={new_status} (was {p.status})"
+    )
+    if new_status and new_status != "PENDING" and new_status != p.status:
+        old = p.status
+        p.status = new_status
+        log_activity(
+            db, action=Actions.PAYMENT_STATUS_CHANGED,
+            third_party_id=tp.id, actor_type="system",
+            order_id=p.merch_order_id,
+            description=f"Status {old} → {new_status} (poller)",
+            metadata={"from": old, "to": new_status,
+                      "source": "poll", "raw_trade_status": raw_ts},
+        )
+        db.commit()
+        logger.info(f"Poller flipped {p.merch_order_id}: {old} → {new_status}")
+    return p.status
+
+
+def _poll_pending_payments_loop():
+    """Background thread that reconciles PENDING payments against D-Money."""
+    logger.info(
+        f"Pending-payment poller started pid={os.getpid()} "
         f"(interval={POLL_INTERVAL_SEC}s, min_age={POLL_MIN_AGE_SEC}s, "
         f"max_age={POLL_MAX_AGE_HRS}h)"
     )
     # Stagger workers so they don't all hit D-Money at the same instant
     time.sleep(POLL_INTERVAL_SEC * (1 + (os.getpid() % 3) / 10))
 
+    tick = 0
     while True:
         try:
             db = SessionLocal()
             try:
-                now    = datetime.now(timezone.utc)
-                cutoff = now - timedelta(seconds=POLL_MIN_AGE_SEC)
-                floor  = now - timedelta(hours=POLL_MAX_AGE_HRS)
+                # IMPORTANT: MySQL DATETIME columns are stored as naive UTC
+                # by SQLAlchemy when we feed it timezone-aware datetimes.
+                # We MUST compare against naive UTC here too, otherwise
+                # the WHERE clause matches nothing and the poller looks
+                # like it isn't running.
+                now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                cutoff = now_utc_naive - timedelta(seconds=POLL_MIN_AGE_SEC)
+                floor  = now_utc_naive - timedelta(hours=POLL_MAX_AGE_HRS)
                 pending = (
                     db.query(Payment)
                     .filter(
@@ -263,43 +299,23 @@ def _poll_pending_payments_loop():
                     .limit(20)
                     .all()
                 )
+                tick += 1
+                if pending or tick % 12 == 1:   # log every minute even if idle
+                    logger.info(
+                        f"Poller tick #{tick} pid={os.getpid()}: "
+                        f"{len(pending)} PENDING payments to reconcile"
+                    )
                 for p in pending:
-                    tp = db.query(ThirdParty).filter_by(
-                        id=p.third_party_id, is_active=True
-                    ).first()
-                    if not tp:
-                        continue
                     try:
-                        gateway = DmoneyPaymentGateway.from_third_party(tp, decrypt)
-                        data = gateway.query_order(merch_order_id=p.merch_order_id)
-                        biz = data.get("biz_content") or {}
-                        if isinstance(biz, str):
-                            try: biz = json.loads(biz)
-                            except Exception: biz = {}
-                        raw_ts = biz.get("trade_status") or ""
-                        new_status = _normalize_status(raw_ts)
-                        if (new_status and new_status != "PENDING"
-                                and new_status != p.status):
-                            old = p.status
-                            p.status = new_status
-                            log_activity(
-                                db, action=Actions.PAYMENT_STATUS_CHANGED,
-                                third_party_id=tp.id, actor_type="system",
-                                order_id=p.merch_order_id,
-                                description=f"Status {old} → {new_status} (poller)",
-                                metadata={"from": old, "to": new_status,
-                                          "source": "poll", "raw_trade_status": raw_ts},
-                            )
-                            db.commit()
-                            logger.info(
-                                f"Poll reconciled {p.merch_order_id}: {old} → {new_status}"
-                            )
+                        _reconcile_one_payment(db, p)
                     except Exception as e:
-                        logger.debug(f"Poll skip {p.merch_order_id}: {e}")
+                        logger.warning(
+                            f"Poller queryOrder failed for {p.merch_order_id}: {e}"
+                        )
             finally:
                 db.close()
         except Exception as e:
-            logger.warning(f"Pending-poll loop error: {e}")
+            logger.error(f"Pending-poll loop error: {e}", exc_info=True)
 
         time.sleep(POLL_INTERVAL_SEC)
 
@@ -897,6 +913,46 @@ def rotate_token(
         request=request, commit=True,
     )
     return {"api_token": raw, "token_preview": preview, "rotated_at": datetime.now(timezone.utc)}
+
+
+@app.post("/admin/payments/{order_id}/refresh", tags=["Admin / Monitoring"])
+def admin_refresh_payment(
+    order_id: str = Path(...),
+    db: Session = Depends(get_db),
+    _admin: Admin = Depends(get_current_admin),
+):
+    """Force-reconcile one payment via D-Money queryOrder. Returns the
+    raw D-Money response so you can see exactly what they replied with."""
+    p = db.query(Payment).filter_by(merch_order_id=order_id).first()
+    if not p:
+        raise HTTPException(404, "Payment not found")
+    try:
+        tp = db.query(ThirdParty).filter_by(id=p.third_party_id, is_active=True).first()
+        if not tp:
+            raise HTTPException(404, "No active third party for this payment")
+        gateway = DmoneyPaymentGateway.from_third_party(tp, decrypt)
+        data = gateway.query_order(merch_order_id=order_id)
+        biz = data.get("biz_content") or {}
+        if isinstance(biz, str):
+            try: biz = json.loads(biz)
+            except Exception: biz = {}
+        raw_ts = biz.get("trade_status") or ""
+        new_status = _normalize_status(raw_ts)
+        old_status = p.status
+        if new_status and new_status != "PENDING" and new_status != p.status:
+            p.status = new_status
+            db.commit()
+        return {
+            "order_id":         order_id,
+            "old_status":       old_status,
+            "new_status":       p.status,
+            "raw_trade_status": raw_ts,
+            "dmoney_response":  data,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"queryOrder failed: {e}")
 
 
 @app.get("/admin/payments", tags=["Admin / Monitoring"])
