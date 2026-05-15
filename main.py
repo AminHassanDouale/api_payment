@@ -41,7 +41,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
@@ -1327,21 +1327,15 @@ def _normalize_status(dmoney_status: Optional[str]) -> str:
 _DMONEY_ACK = {"code": "0", "msg": "Success", "result": "SUCCESS"}
 
 
-@app.post("/payment/notify", tags=["Webhooks"])
-async def payment_notify(request: Request, bg: BackgroundTasks):
-    """Endpoint that D-Money calls. We persist, route to the third party, and
-    return the documented ack ({code:0, msg:Success, result:SUCCESS}) quickly
-    so D-Money doesn't retry."""
-    try:
-        body = await request.json()
-    except Exception:
-        return _DMONEY_ACK
-
+def _process_dmoney_notification(body: dict, request: Request, bg: BackgroundTasks) -> str:
+    """Process a D-Money notification (from either POST body or GET query
+    string). Returns the canonical status so the caller can decide what to
+    return to D-Money (ack JSON) or to the user (success/failed page)."""
     merch_order_id   = body.get("merch_order_id", "unknown")
     payment_order_id = body.get("payment_order_id")
     appid            = body.get("appid")
     raw_status       = body.get("trade_status") or ""
-    trade_status     = raw_status.upper()        # for storage/filters
+    trade_status     = raw_status.upper()
     canonical        = _normalize_status(raw_status)
 
     logger.info(f"D-Money notify appid={appid} order={merch_order_id} "
@@ -1356,7 +1350,7 @@ async def payment_notify(request: Request, bg: BackgroundTasks):
             ).first()
             if existing:
                 logger.info(f"Duplicate notify ignored payment_order_id={payment_order_id}")
-                return _DMONEY_ACK
+                return canonical
 
         # Identify third party (by appid, fallback to order lookup)
         tp = None
@@ -1367,7 +1361,6 @@ async def payment_notify(request: Request, bg: BackgroundTasks):
             if pay:
                 tp = db.query(ThirdParty).filter_by(id=pay.third_party_id).first()
 
-        # Persist notification
         notif = PaymentNotification(
             third_party_id   = tp.id if tp else None,
             merch_order_id   = merch_order_id,
@@ -1387,7 +1380,6 @@ async def payment_notify(request: Request, bg: BackgroundTasks):
         )
         db.add(notif)
 
-        # Update local payment status from canonical D-Money status
         pay = db.query(Payment).filter_by(merch_order_id=merch_order_id).first()
         old_status = pay.status if pay else None
         if pay and canonical and canonical != old_status:
@@ -1401,7 +1393,6 @@ async def payment_notify(request: Request, bg: BackgroundTasks):
             type           = "payment_notification",
         ))
 
-        # Activity log: webhook received + status change (if any)
         log_activity(
             db, action=Actions.WEBHOOK_RECEIVED,
             third_party_id=tp.id if tp else None, actor_type="dmoney",
@@ -1409,7 +1400,8 @@ async def payment_notify(request: Request, bg: BackgroundTasks):
             description=f"D-Money webhook: trade_status={raw_status} → {canonical}"
                         + ("" if tp else " (UNKNOWN APPID)"),
             metadata={"trade_status": raw_status, "canonical": canonical,
-                      "appid": appid, "payment_order_id": payment_order_id},
+                      "appid": appid, "payment_order_id": payment_order_id,
+                      "transport": body.get("_transport", "POST")},
         )
         if pay and canonical and canonical != old_status:
             log_activity(
@@ -1423,14 +1415,13 @@ async def payment_notify(request: Request, bg: BackgroundTasks):
         db.commit()
         db.refresh(notif)
 
-        # Forward to third party in the background (response to D-Money is immediate)
         if tp and tp.notify_url:
             forward_payload = {
                 "order_id":         merch_order_id,
                 "status":           canonical,
                 "amount":           body.get("total_amount"),
                 "currency":         body.get("trans_currency"),
-                "trade_status":     raw_status,           # raw D-Money value
+                "trade_status":     raw_status,
                 "trans_end_time":   body.get("trans_end_time"),
                 "notify_time":      body.get("notify_time"),
                 "payment_order_id": payment_order_id,
@@ -1452,7 +1443,35 @@ async def payment_notify(request: Request, bg: BackgroundTasks):
     finally:
         db.close()
 
+    return canonical
+
+
+@app.post("/payment/notify", tags=["Webhooks"])
+async def payment_notify_post(request: Request, bg: BackgroundTasks):
+    """D-Money production: POST a JSON body to this endpoint."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _DMONEY_ACK
+    body["_transport"] = "POST"
+    _process_dmoney_notification(body, request, bg)
     return _DMONEY_ACK
+
+
+@app.get("/payment/notify", tags=["Webhooks"])
+async def payment_notify_get(request: Request, bg: BackgroundTasks):
+    """D-Money TEST sandbox redirects the user's browser HERE with payment
+    data as query-string params (GET). We process the data exactly like the
+    POST version, then send the buyer to a friendly success/failed page."""
+    body = dict(request.query_params)
+    body["_transport"] = "GET"
+    canonical = _process_dmoney_notification(body, request, bg)
+
+    if canonical == "PAID":
+        return RedirectResponse(url="/payment/success", status_code=303)
+    if canonical in ("FAILED", "CANCELLED", "EXPIRED"):
+        return RedirectResponse(url="/payment/failed", status_code=303)
+    return RedirectResponse(url="/payment/success", status_code=303)
 
 
 # Manual retry of a delivery (admin)
