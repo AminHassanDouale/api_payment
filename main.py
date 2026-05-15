@@ -222,8 +222,10 @@ def _migrate_add_missing_columns():
                 logger.warning(f"Migration skipped ({stmt}): {e}")
 
 
-POLL_INTERVAL_SEC = int(os.getenv("PENDING_POLL_INTERVAL_SEC", "15"))
-POLL_MIN_AGE_SEC  = int(os.getenv("PENDING_POLL_MIN_AGE_SEC",  "30"))
+# Defaults tuned for "buyer doesn't click Return to merchant" — payment
+# lands in the DB within ~5–10s of actually completing on D-Money.
+POLL_INTERVAL_SEC = int(os.getenv("PENDING_POLL_INTERVAL_SEC", "5"))
+POLL_MIN_AGE_SEC  = int(os.getenv("PENDING_POLL_MIN_AGE_SEC",  "5"))
 POLL_MAX_AGE_HRS  = int(os.getenv("PENDING_POLL_MAX_AGE_HRS",  "24"))
 
 
