@@ -144,8 +144,14 @@
   </button>
 
   <div class="result-box" id="result-box">
-    <div class="result-header">Checkout URL generated</div>
+    <div class="result-header">
+      <span id="result-title">Checkout URL generated</span>
+      <span class="small" style="float:right;" id="poll-indicator"></span>
+    </div>
     <div class="url-wrap">
+      <div id="status-banner" style="
+        display:none; padding:12px; border-radius:8px; margin-bottom:10px;
+        text-align:center; font-weight:600;"></div>
       <div class="url-text" id="url-text"></div>
       <div class="result-actions">
         <button class="action-btn btn-copy" id="copy-btn" onclick="copyUrl()">Copy URL</button>
@@ -153,7 +159,7 @@
       </div>
     </div>
     <div class="order-info">
-      Order: <strong id="r-order">—</strong>  ·  Prepay: <strong id="r-prepay">—</strong>
+      Order: <strong id="r-order">—</strong>  ·  Prepay: <strong id="r-prepay">—</strong>  ·  Status: <strong id="r-status">PENDING</strong>
     </div>
   </div>
 
@@ -171,6 +177,10 @@
 
   let mode = "single";
   let checkoutUrl = "";
+  let currentOrderId = "";
+  let pollTimer = null;
+  let pollStartedAt = 0;
+  let dmoneyWin = null;          // window reference to D-Money tab
 
   document.getElementById("token").value = localStorage.getItem("tp_token") || "";
   document.getElementById("token").addEventListener("change", e => {
@@ -271,13 +281,22 @@
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
       if (!data.checkout_url) throw new Error("No checkout_url in response.");
 
-      checkoutUrl = data.checkout_url;
+      checkoutUrl    = data.checkout_url;
+      currentOrderId = data.order_id;
       document.getElementById("url-text").textContent = checkoutUrl;
       document.getElementById("r-order").textContent  = data.order_id  || "—";
       document.getElementById("r-prepay").textContent = data.prepay_id || "—";
+      document.getElementById("r-status").textContent = "PENDING";
       const cb = document.getElementById("copy-btn");
       cb.textContent = "Copy URL"; cb.classList.remove("copied");
       document.getElementById("result-box").style.display = "block";
+
+      // Open D-Money checkout in a new tab automatically and start polling.
+      // The buyer pays in the new tab; this page polls our backend, which
+      // does live D-Money queryOrder for PENDING — no "Return to merchant"
+      // click required for the merchant page to know the result.
+      dmoneyWin = window.open(checkoutUrl, "_blank");
+      startStatusPolling(data.order_id, token);
     } catch (e) {
       showError("Error: " + e.message);
     } finally {
@@ -287,7 +306,71 @@
     }
   }
 
-  function openUrl() { if (checkoutUrl) window.open(checkoutUrl, "_blank"); }
+  // ── Live status polling ─────────────────────────────────────────────
+  function showBanner(text, color, bg) {
+    const b = document.getElementById("status-banner");
+    b.textContent = text;
+    b.style.background = bg;
+    b.style.color = color;
+    b.style.border = "1px solid " + color;
+    b.style.display = "block";
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    document.getElementById("poll-indicator").textContent = "";
+  }
+
+  async function pollOnce(orderId, token) {
+    try {
+      const r = await fetch(`${API}/api/payments/${encodeURIComponent(orderId)}`, {
+        headers: { "Authorization": "Bearer " + token },
+      });
+      if (!r.ok) return null;
+      const data = await r.json();
+      return data.status;
+    } catch { return null; }
+  }
+
+  function startStatusPolling(orderId, token) {
+    stopPolling();
+    pollStartedAt = Date.now();
+    showBanner("⏳ Waiting for payment on D-Money…", "#92400e", "#fef3c7");
+    document.getElementById("poll-indicator").textContent = "checking every 2s…";
+
+    pollTimer = setInterval(async () => {
+      const elapsed = Math.floor((Date.now() - pollStartedAt) / 1000);
+      document.getElementById("poll-indicator").textContent =
+        `checking every 2s · ${elapsed}s elapsed`;
+
+      const status = await pollOnce(orderId, token);
+      if (!status) return;
+      document.getElementById("r-status").textContent = status;
+
+      if (status === "PAID") {
+        showBanner("✅ Payment received — order is PAID", "#065f46", "#d1fae5");
+        document.getElementById("result-title").textContent = "Payment complete";
+        stopPolling();
+      } else if (status === "FAILED" || status === "CANCELLED" || status === "EXPIRED") {
+        showBanner(`❌ Payment ${status}`, "#991b1b", "#fee2e2");
+        stopPolling();
+      } else if (elapsed >= 10 * 60) {
+        // 10-minute safety stop
+        showBanner("⌛ Stopped polling after 10 min. Reload to retry.", "#92400e", "#fef3c7");
+        stopPolling();
+      }
+    }, 2000);
+  }
+
+  function openUrl() {
+    if (!checkoutUrl) return;
+    // Reuse existing D-Money tab if still open, else spawn a new one
+    if (dmoneyWin && !dmoneyWin.closed) {
+      dmoneyWin.focus();
+    } else {
+      dmoneyWin = window.open(checkoutUrl, "_blank");
+    }
+  }
   function copyUrl() {
     if (!checkoutUrl) return;
     const done = () => {
