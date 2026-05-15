@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Pay with D-Money — Scolapp</title>
+  <title>Pay with D-Money — Third-Party Demo</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -11,117 +11,131 @@
       display: flex; align-items: center; justify-content: center;
       background: #f4f6f9;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 20px;
     }
     .card {
       background: #fff; border-radius: 16px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.10);
-      padding: 40px 36px; width: 100%; max-width: 460px;
+      padding: 36px 32px; width: 100%; max-width: 520px;
     }
-    .logo { font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 6px; }
-    .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 28px; }
-    .field { margin-bottom: 16px; }
-    label { display: block; font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 6px; }
-    input {
-      width: 100%; padding: 10px 14px;
+    .logo { font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 6px;
+      display: flex; align-items: center; gap: 10px; }
+    .env-badge {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+      padding: 3px 8px; border-radius: 4px;
+      background: #fef3c7; color: #92400e;
+    }
+    .subtitle { font-size: 13px; color: #6b7280; margin-bottom: 22px; }
+    .field { margin-bottom: 12px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 5px;
+      text-transform: uppercase; letter-spacing: .4px; }
+    input, textarea {
+      width: 100%; padding: 9px 12px;
       border: 1px solid #d1d5db; border-radius: 8px;
-      font-size: 15px; color: #111827; outline: none; transition: border-color .2s;
+      font-size: 14px; color: #111827; outline: none; transition: border-color .2s;
+      font-family: inherit;
     }
-    input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.10); }
+    input:focus, textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.10); }
+    textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; min-height: 80px; }
+    .mode-switch { display: flex; gap: 6px; margin-bottom: 14px; }
+    .mode-btn {
+      flex: 1; padding: 7px; border-radius: 6px; cursor: pointer;
+      font-size: 13px; font-weight: 600; text-align: center;
+      background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb;
+    }
+    .mode-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    .row2 { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+    .item-row { display: grid; grid-template-columns: 2fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .item-row button { padding: 8px 10px; background: #fee2e2; color: #dc2626; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
+    .add-item { display: inline-block; padding: 6px 12px; background: #e0e7ff; color: #4f46e5;
+                border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 4px; }
     .summary {
       background: #f9fafb; border: 1px solid #e5e7eb;
-      border-radius: 10px; padding: 14px 16px; margin-bottom: 24px;
+      border-radius: 10px; padding: 12px 14px; margin: 14px 0;
     }
     .summary-row {
       display: flex; justify-content: space-between;
-      font-size: 14px; color: #374151; margin-bottom: 6px;
+      font-size: 13px; color: #374151; margin-bottom: 4px;
     }
-    .summary-row:last-child { margin-bottom: 0; }
     .summary-row.total {
-      font-weight: 600; font-size: 16px; color: #111827;
-      border-top: 1px solid #e5e7eb; padding-top: 10px; margin-top: 6px;
+      font-weight: 700; font-size: 16px; color: #111827;
+      border-top: 1px solid #e5e7eb; padding-top: 8px; margin-top: 6px;
     }
     .pay-btn {
-      width: 100%; padding: 14px;
+      width: 100%; padding: 12px;
       background: #4f46e5; color: #fff;
-      font-size: 16px; font-weight: 600;
+      font-size: 15px; font-weight: 600;
       border: none; border-radius: 10px; cursor: pointer;
-      transition: background .2s, transform .1s;
       display: flex; align-items: center; justify-content: center; gap: 10px;
     }
     .pay-btn:hover:not(:disabled) { background: #4338ca; }
-    .pay-btn:active:not(:disabled) { transform: scale(0.98); }
     .pay-btn:disabled { background: #9ca3af; cursor: not-allowed; }
-    .spinner {
-      width: 18px; height: 18px;
-      border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
-      border-radius: 50%; animation: spin .7s linear infinite; display: none;
-    }
+    .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+      border-radius: 50%; animation: spin .7s linear infinite; display: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .error-msg {
-      margin-top: 14px; padding: 10px 14px;
-      background: #fef2f2; border: 1px solid #fecaca;
-      border-radius: 8px; color: #dc2626; font-size: 13px; display: none;
-    }
-    .result-box {
-      display: none; margin-top: 24px;
-      border: 1.5px solid #4f46e5; border-radius: 12px; overflow: hidden;
-    }
-    .result-header {
-      background: #4f46e5; color: #fff;
-      font-size: 13px; font-weight: 600; padding: 10px 14px;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .result-header span { opacity: 0.8; font-weight: 400; font-size: 12px; }
-    .url-wrap { padding: 14px; background: #f5f3ff; }
-    .url-text {
-      font-family: monospace; font-size: 11.5px; color: #374151;
+    .alert { margin-top: 12px; padding: 9px 12px; border-radius: 8px; font-size: 13px; display: none; }
+    .alert.err { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; word-break: break-word; }
+    .result-box { display: none; margin-top: 14px; border: 1.5px solid #4f46e5; border-radius: 12px; overflow: hidden; }
+    .result-header { background: #4f46e5; color: #fff; font-size: 13px; font-weight: 600; padding: 9px 14px; }
+    .url-wrap { padding: 12px; background: #f5f3ff; }
+    .url-text { font-family: ui-monospace, monospace; font-size: 11px; color: #374151;
       word-break: break-all; line-height: 1.6;
-      background: #fff; border: 1px solid #e5e7eb;
-      border-radius: 8px; padding: 10px 12px;
-      max-height: 120px; overflow-y: auto;
-      margin-bottom: 12px; user-select: all; cursor: text;
-    }
-    .result-actions { display: flex; gap: 8px; }
-    .action-btn {
-      flex: 1; padding: 10px; font-size: 14px; font-weight: 600;
-      border: none; border-radius: 8px; cursor: pointer;
-      transition: background .15s, transform .1s;
-    }
-    .action-btn:active { transform: scale(0.97); }
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      padding: 8px 10px; max-height: 130px; overflow-y: auto; margin-bottom: 10px; }
+    .result-actions { display: flex; gap: 6px; }
+    .action-btn { flex: 1; padding: 8px; font-size: 13px; font-weight: 600;
+      border: none; border-radius: 6px; cursor: pointer; }
     .btn-copy { background: #f3f4f6; color: #374151; }
-    .btn-copy:hover { background: #e5e7eb; }
     .btn-copy.copied { background: #d1fae5; color: #065f46; }
     .btn-open { background: #4f46e5; color: #fff; }
-    .btn-open:hover { background: #4338ca; }
-    .order-info {
-      padding: 10px 14px; background: #f9fafb;
-      border-top: 1px solid #e5e7eb;
-      font-size: 12px; color: #6b7280;
-      display: flex; justify-content: space-between;
-    }
+    .order-info { padding: 8px 12px; background: #f9fafb; border-top: 1px solid #e5e7eb;
+      font-size: 11px; color: #6b7280; }
     .order-info strong { color: #374151; }
-    .secure-note { text-align: center; font-size: 12px; color: #9ca3af; margin-top: 18px; }
+    .secure-note { text-align: center; font-size: 11px; color: #9ca3af; margin-top: 14px; }
   </style>
 </head>
 <body>
 
 <div class="card">
-  <div class="logo">Scolapp</div>
-  <div class="subtitle">Complete your payment securely via D-Money</div>
+  <div class="logo">
+    Third-Party Demo
+    <span class="env-badge">API v2</span>
+  </div>
+  <div class="subtitle">Paste your lifetime API token, then send amount + description.</div>
 
   <div class="field">
-    <label>Description</label>
-    <input type="text" id="title" value="Scolarite Janvier 2026" />
+    <label>API Token (tp_live_…)</label>
+    <input type="password" id="token" placeholder="tp_live_xxxxxxxxxxxxxxxx" autocomplete="off"/>
   </div>
-  <div class="field">
-    <label>Amount (DJF)</label>
-    <input type="number" id="amount" value="1000" min="1" />
+
+  <div class="mode-switch">
+    <div class="mode-btn active" id="mode-single" onclick="setMode('single')">Single Item</div>
+    <div class="mode-btn"        id="mode-bulk"   onclick="setMode('bulk')">Bulk Items</div>
+  </div>
+
+  <!-- Single -->
+  <div id="single-mode">
+    <div class="field">
+      <label>Description</label>
+      <input id="s-desc" value="Test payment 10 DJF" maxlength="256"/>
+    </div>
+    <div class="field">
+      <label>Amount (DJF)</label>
+      <input id="s-amount" type="number" value="10" min="1"/>
+    </div>
+  </div>
+
+  <!-- Bulk -->
+  <div id="bulk-mode" style="display:none;">
+    <label>Items</label>
+    <div id="bulk-rows"></div>
+    <button class="add-item" onclick="addRow()">+ Add item</button>
   </div>
 
   <div class="summary">
-    <div class="summary-row"><span>Description</span><span id="s-title">Scolarite Janvier 2026</span></div>
+    <div class="summary-row"><span>Items</span><span id="s-count">1</span></div>
     <div class="summary-row"><span>Currency</span><span>DJF</span></div>
-    <div class="summary-row total"><span>Total</span><span id="s-amount">1,000 DJF</span></div>
+    <div class="summary-row total"><span>Total</span><span id="s-total">10 DJF</span></div>
   </div>
 
   <button class="pay-btn" id="pay-btn" onclick="pay()">
@@ -129,13 +143,8 @@
     <span id="btn-text">Pay Now</span>
   </button>
 
-  <div class="error-msg" id="error-msg"></div>
-
   <div class="result-box" id="result-box">
-    <div class="result-header">
-      Checkout URL generated
-      <span id="result-time"></span>
-    </div>
+    <div class="result-header">Checkout URL generated</div>
     <div class="url-wrap">
       <div class="url-text" id="url-text"></div>
       <div class="result-actions">
@@ -144,90 +153,133 @@
       </div>
     </div>
     <div class="order-info">
-      <span>Order: <strong id="result-order-id">—</strong></span>
-      <span>Prepay: <strong id="result-prepay-id">—</strong></span>
+      Order: <strong id="r-order">—</strong>  ·  Prepay: <strong id="r-prepay">—</strong>
     </div>
   </div>
 
-  <div class="secure-note">🔒 Secured by D-Money Payment Gateway</div>
+  <div class="alert err" id="alert-err"></div>
+
+  <div class="secure-note">🔒 Routed through the D-Money Payment API platform</div>
 </div>
 
 <script>
-  // ── Detect environment automatically ──────────────────────────────────────
-  const IS_LIVE  = location.hostname === "api.scolapp.com";
-  const API_BASE = IS_LIVE ? "https://api.scolapp.com" : "http://localhost:8000";
-  const API_KEY  = "scolapp-dmoney-secret-2026";
+  const API = (() => {
+    const h = location.hostname;
+    if (!h || h === "localhost" || h === "127.0.0.1") return "http://localhost:8000";
+    return location.origin;
+  })();
 
-  // Notify and redirect URLs always point to api.scolapp.com — not scolapp.com
-  const NOTIFY_URL   = "https://api.scolapp.com/payment/notify";
-  const REDIRECT_URL = "https://api.scolapp.com/payment/success";
-  // ─────────────────────────────────────────────────────────────────────────
-
+  let mode = "single";
   let checkoutUrl = "";
 
-  document.getElementById("title").addEventListener("input", e => {
-    document.getElementById("s-title").textContent = e.target.value || "-";
+  document.getElementById("token").value = localStorage.getItem("tp_token") || "";
+  document.getElementById("token").addEventListener("change", e => {
+    localStorage.setItem("tp_token", e.target.value.trim());
   });
-  document.getElementById("amount").addEventListener("input", e => {
-    const n = parseFloat(e.target.value) || 0;
-    document.getElementById("s-amount").textContent = n.toLocaleString() + " DJF";
-  });
+
+  function setMode(m) {
+    mode = m;
+    document.getElementById("mode-single").classList.toggle("active", m === "single");
+    document.getElementById("mode-bulk").classList.toggle("active", m === "bulk");
+    document.getElementById("single-mode").style.display = m === "single" ? "" : "none";
+    document.getElementById("bulk-mode").style.display   = m === "bulk"   ? "" : "none";
+    if (m === "bulk" && document.getElementById("bulk-rows").children.length === 0) {
+      addRow(); addRow();
+    }
+    refresh();
+  }
+
+  function addRow() {
+    const wrap = document.createElement("div");
+    wrap.className = "item-row";
+    wrap.innerHTML = `
+      <input class="b-desc"   placeholder="Description" maxlength="256"/>
+      <input class="b-amount" type="number" placeholder="Amount" min="1"/>
+      <button onclick="this.parentElement.remove(); refresh();" title="Remove">×</button>`;
+    document.getElementById("bulk-rows").appendChild(wrap);
+    wrap.querySelectorAll("input").forEach(i => i.addEventListener("input", refresh));
+  }
+
+  function readBulk() {
+    return [...document.querySelectorAll("#bulk-rows .item-row")].map(r => ({
+      description: r.querySelector(".b-desc").value.trim(),
+      amount:      parseFloat(r.querySelector(".b-amount").value) || 0,
+    })).filter(it => it.description && it.amount > 0);
+  }
+
+  function refresh() {
+    let total = 0, count = 1;
+    if (mode === "single") {
+      total = parseFloat(document.getElementById("s-amount").value) || 0;
+    } else {
+      const items = readBulk();
+      total = items.reduce((s, it) => s + it.amount, 0);
+      count = items.length || 0;
+    }
+    document.getElementById("s-count").textContent = count;
+    document.getElementById("s-total").textContent = total.toLocaleString() + " DJF";
+  }
+
+  ["s-amount","s-desc"].forEach(id => document.getElementById(id).addEventListener("input", refresh));
+
+  function showError(msg) {
+    const el = document.getElementById("alert-err");
+    el.textContent = msg; el.style.display = "block";
+  }
 
   async function pay() {
-    const title   = document.getElementById("title").value.trim();
-    const amount  = parseFloat(document.getElementById("amount").value);
-    const btn     = document.getElementById("pay-btn");
+    const token = document.getElementById("token").value.trim();
+    const btn = document.getElementById("pay-btn");
     const spinner = document.getElementById("spinner");
     const btnText = document.getElementById("btn-text");
-    const errorEl = document.getElementById("error-msg");
 
-    if (!title)                return showError("Please enter a description.");
-    if (!amount || amount < 1) return showError("Please enter a valid amount.");
-
-    errorEl.style.display = "none";
+    document.getElementById("alert-err").style.display = "none";
     document.getElementById("result-box").style.display = "none";
+
+    if (!token) return showError("API token required.");
+
+    let body;
+    if (mode === "single") {
+      const description = document.getElementById("s-desc").value.trim();
+      const amount = parseFloat(document.getElementById("s-amount").value);
+      if (!description) return showError("Description required.");
+      if (!amount || amount < 1) return showError("Valid amount required.");
+      body = { amount, description };
+    } else {
+      const items = readBulk();
+      if (!items.length) return showError("Add at least one item with description + amount.");
+      body = { items };
+    }
+
     btn.disabled = true;
     spinner.style.display = "block";
-    btnText.textContent = "Generating...";
+    btnText.textContent = "Generating…";
 
     try {
-      const resp = await fetch(`${API_BASE}/payment/create`, {
+      const res = await fetch(`${API}/api/payments`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-API-Key": API_KEY,
+          "Authorization": "Bearer " + token,
         },
-        body: JSON.stringify({
-          amount:       amount,
-          title:        title,
-          currency:     "DJF",
-          language:     "en",
-          notify_url:   NOTIFY_URL,
-          redirect_url: REDIRECT_URL,
-        }),
+        body: JSON.stringify(body),
       });
+      let data;
+      try { data = await res.json(); }
+      catch { throw new Error(`Server returned non-JSON (HTTP ${res.status})`); }
 
-      const data = await resp.json();
-      if (!resp.ok)           throw new Error(data.detail || `Server error (${resp.status})`);
-      if (!data.checkout_url) throw new Error("No checkout URL returned from server.");
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      if (!data.checkout_url) throw new Error("No checkout_url in response.");
 
       checkoutUrl = data.checkout_url;
-
-      // Always show the URL on the page
-      document.getElementById("url-text").textContent         = checkoutUrl;
-      document.getElementById("result-order-id").textContent  = data.order_id  || "—";
-      document.getElementById("result-prepay-id").textContent = data.prepay_id || "—";
-      document.getElementById("result-time").textContent      = new Date().toLocaleTimeString();
-      document.getElementById("copy-btn").textContent = "Copy URL";
-      document.getElementById("copy-btn").classList.remove("copied");
+      document.getElementById("url-text").textContent = checkoutUrl;
+      document.getElementById("r-order").textContent  = data.order_id  || "—";
+      document.getElementById("r-prepay").textContent = data.prepay_id || "—";
+      const cb = document.getElementById("copy-btn");
+      cb.textContent = "Copy URL"; cb.classList.remove("copied");
       document.getElementById("result-box").style.display = "block";
-      document.getElementById("result-box").scrollIntoView({ behavior: "smooth", block: "nearest" });
-
-      // Automatically open — same as window.open('checkout_url') in console
-      openUrl();
-
-    } catch (err) {
-      showError(err.message);
+    } catch (e) {
+      showError("Error: " + e.message);
     } finally {
       btn.disabled = false;
       spinner.style.display = "none";
@@ -235,31 +287,20 @@
     }
   }
 
-  function openUrl() {
-    if (!checkoutUrl) return;
-    // Exactly the same as typing in console: window.open('checkout_url')
-    window.open(checkoutUrl, "_blank");
-  }
-
+  function openUrl() { if (checkoutUrl) window.open(checkoutUrl, "_blank"); }
   function copyUrl() {
     if (!checkoutUrl) return;
-    navigator.clipboard.writeText(checkoutUrl).then(() => {
-      const btn = document.getElementById("copy-btn");
-      btn.textContent = "Copied!";
-      btn.classList.add("copied");
-      setTimeout(() => {
-        btn.textContent = "Copy URL";
-        btn.classList.remove("copied");
-      }, 2000);
-    });
+    const done = () => {
+      const b = document.getElementById("copy-btn");
+      b.textContent = "Copied!"; b.classList.add("copied");
+      setTimeout(() => { b.textContent = "Copy URL"; b.classList.remove("copied"); }, 2000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(checkoutUrl).then(done).catch(() => {});
+    }
   }
 
-  function showError(msg) {
-    const el = document.getElementById("error-msg");
-    el.textContent = msg;
-    el.style.display = "block";
-  }
+  refresh();
 </script>
-
 </body>
 </html>

@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>D-Money Platform — Admin</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:#f4f6f9; color:#111827; min-height:100vh; padding:24px; }
+  .container { max-width:1200px; margin:0 auto; }
+  h1 { font-size:24px; margin-bottom:6px; }
+  .sub { color:#6b7280; font-size:14px; margin-bottom:24px; }
+  .card { background:#fff; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.06);
+          padding:22px 24px; margin-bottom:18px; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .field { margin-bottom:12px; }
+  label { display:block; font-size:12px; font-weight:600; color:#374151; margin-bottom:4px; text-transform:uppercase; letter-spacing:.4px;}
+  input, select, textarea { width:100%; padding:9px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; outline:none; font-family:inherit; }
+  input:focus, textarea:focus, select:focus { border-color:#4f46e5; box-shadow:0 0 0 3px rgba(79,70,229,.1); }
+  textarea { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:12px; min-height:120px; }
+  button { padding:9px 16px; background:#4f46e5; color:#fff; border:none; border-radius:8px; font-weight:600; cursor:pointer; font-size:14px; }
+  button:hover { background:#4338ca; }
+  button.secondary { background:#e5e7eb; color:#374151; }
+  button.secondary:hover { background:#d1d5db; }
+  button.danger { background:#dc2626; }
+  button.danger:hover { background:#b91c1c; }
+  .btns { display:flex; gap:8px; flex-wrap:wrap; }
+  .hidden { display:none !important; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:8px 10px; text-align:left; border-bottom:1px solid #e5e7eb; }
+  th { background:#f9fafb; font-weight:600; color:#374151; }
+  .status-ok { color:#059669; font-weight:600; }
+  .status-off { color:#dc2626; font-weight:600; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+  .badge.PAID { background:#d1fae5; color:#065f46; }
+  .badge.PENDING { background:#fef3c7; color:#92400e; }
+  .badge.FAILED, .badge.CANCELLED { background:#fee2e2; color:#991b1b; }
+  .alert { padding:10px 14px; border-radius:8px; margin-bottom:14px; font-size:13px; }
+  .alert.error { background:#fef2f2; border:1px solid #fecaca; color:#dc2626; }
+  .alert.success { background:#d1fae5; border:1px solid #a7f3d0; color:#065f46; }
+  .token-box { background:#fffbeb; border:2px solid #f59e0b; padding:14px; border-radius:8px; margin:10px 0;
+               word-break:break-all; font-family:ui-monospace,monospace; font-size:12px; }
+  .tabs { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid #e5e7eb; }
+  .tab { padding:10px 18px; cursor:pointer; font-size:14px; color:#6b7280; border-bottom:2px solid transparent; }
+  .tab.active { color:#4f46e5; border-bottom-color:#4f46e5; font-weight:600; }
+  h2 { font-size:18px; margin-bottom:14px; }
+  .small { font-size:11px; color:#9ca3af; }
+  .nav { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+  .live-dot { display:inline-block; width:8px; height:8px; background:#10b981; border-radius:50%;
+              vertical-align:middle; margin-right:6px; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  .info-banner { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:10px 14px;
+                 border-radius:8px; font-size:13px; margin-bottom:14px; }
+  .info-banner code { background:#dbeafe; padding:1px 6px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ─── Login / Register ─── -->
+  <div id="auth-view">
+    <h1>D-Money Platform Admin</h1>
+    <div class="sub">Sign in or register the first admin</div>
+
+    <div class="card" style="max-width:480px;">
+      <div class="tabs">
+        <div class="tab active" id="tab-login" onclick="showAuthTab('login')">Login</div>
+        <div class="tab" id="tab-register" onclick="showAuthTab('register')">Register first admin</div>
+      </div>
+
+      <div id="auth-alert"></div>
+
+      <div id="login-form">
+        <div class="field"><label>Email</label><input type="email" id="li-email" value=""/></div>
+        <div class="field"><label>Password</label><input type="password" id="li-password"/></div>
+        <button onclick="doLogin()">Sign In</button>
+      </div>
+
+      <div id="register-form" class="hidden">
+        <div class="field"><label>Email</label><input type="email" id="r-email"/></div>
+        <div class="field"><label>Name</label><input type="text" id="r-name"/></div>
+        <div class="field"><label>Password (min 8)</label><input type="password" id="r-password"/></div>
+        <button onclick="doRegister()">Create Admin</button>
+        <div class="small" style="margin-top:10px;">First admin is open. After that, login required.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Dashboard ─── -->
+  <div id="dash-view" class="hidden">
+    <div class="nav">
+      <div><h1>D-Money Platform Admin</h1><div class="sub" id="me-label"></div></div>
+      <button class="secondary" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" id="t-tps"   onclick="showTab('tps')">Third Parties</div>
+      <div class="tab"        id="t-new"   onclick="showTab('new')">+ New</div>
+      <div class="tab"        id="t-pay"   onclick="showTab('pay')">Payments</div>
+      <div class="tab"        id="t-act"   onclick="showTab('act')">Activity</div>
+      <div class="tab"        id="t-notif" onclick="showTab('notif')">Notifications</div>
+      <div class="tab"        id="t-hooks" onclick="showTab('hooks')">Webhook Deliveries</div>
+    </div>
+
+    <div id="alert"></div>
+
+    <!-- Third parties list -->
+    <div id="view-tps" class="card">
+      <h2>Registered Third Parties <span class="small"><span class="live-dot"></span>auto-refresh</span></h2>
+      <div id="tps-list">Loading…</div>
+    </div>
+
+    <!-- New third party form -->
+    <div id="view-new" class="card hidden">
+      <h2>Register a Third Party</h2>
+      <div class="row">
+        <div class="field"><label>Name *</label><input id="tp-name"/></div>
+        <div class="field"><label>Company</label><input id="tp-company"/></div>
+        <div class="field"><label>Email</label><input id="tp-email" type="email"/></div>
+        <div class="field"><label>Phone</label><input id="tp-phone"/></div>
+      </div>
+      <h2 style="margin-top:18px;">D-Money credentials</h2>
+      <div class="row">
+        <div class="field"><label>App ID *</label><input id="tp-appid"/></div>
+        <div class="field"><label>App Key *</label><input id="tp-appkey"/></div>
+        <div class="field"><label>App Secret *</label><input id="tp-appsecret" type="password"/></div>
+        <div class="field"><label>Merch Code (Short Code) *</label><input id="tp-merch"/></div>
+      </div>
+      <div class="field">
+        <label>Private Key (PEM or base64-DER) *</label>
+        <textarea id="tp-privkey" placeholder="-----BEGIN PRIVATE KEY----- ... or base64-encoded DER"></textarea>
+      </div>
+      <h2 style="margin-top:18px;">Endpoints</h2>
+      <div class="row">
+        <div class="field"><label>D-Money Base URL *</label><input id="tp-baseurl" value="https://pgtest.d-money.dj:38443"/></div>
+        <div class="field"><label>D-Money Query Base URL</label><input id="tp-queryurl" placeholder="(defaults to base)"/></div>
+        <div class="field"><label>D-Money Checkout Base URL</label><input id="tp-checkouturl" placeholder="(defaults to base/payment/web/paygate)"/></div>
+        <div class="field"><label>Business Type</label><input id="tp-biztype" value="OnlineMerchant"/></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Notify URL (your webhook receiver) *</label><input id="tp-notify" placeholder="https://yourapp.com/dmoney/webhook"/></div>
+        <div class="field"><label>Redirect URL (after payment) *</label><input id="tp-redirect" placeholder="https://yourapp.com/payment/done"/></div>
+      </div>
+      <button onclick="createTP()">Create Third Party</button>
+    </div>
+
+    <!-- Payments -->
+    <div id="view-pay" class="card hidden">
+      <h2>All Payments <span class="small"><span class="live-dot"></span>auto-refresh</span></h2>
+      <div id="pay-list">Loading…</div>
+    </div>
+
+    <!-- Activity log -->
+    <div id="view-act" class="card hidden">
+      <h2>Activity Log
+        <span class="small"><span class="live-dot"></span>auto-refresh · suivi des mouvements</span>
+      </h2>
+      <div class="row" style="margin-bottom:10px;">
+        <div class="field">
+          <label>Filter by Third Party</label>
+          <select id="act-tp"><option value="">All</option></select>
+        </div>
+        <div class="field">
+          <label>Filter by Action</label>
+          <select id="act-action">
+            <option value="">All</option>
+            <option>payment_created</option>
+            <option>payment_queried</option>
+            <option>payment_status_changed</option>
+            <option>webhook_received</option>
+            <option>webhook_forwarded</option>
+            <option>webhook_failed</option>
+            <option>third_party_created</option>
+            <option>third_party_updated</option>
+            <option>third_party_disabled</option>
+            <option>third_party_deleted</option>
+            <option>token_rotated</option>
+            <option>admin_login</option>
+            <option>admin_registered</option>
+          </select>
+        </div>
+      </div>
+      <div class="btns" style="margin-bottom:10px;">
+        <button onclick="loadActivity()">Apply filters</button>
+        <button class="secondary" onclick="resetActFilters()">Reset</button>
+      </div>
+      <div id="act-list">Loading…</div>
+    </div>
+
+    <!-- Notifications (raw D-Money webhook payloads) -->
+    <div id="view-notif" class="card hidden">
+      <h2>D-Money Notifications
+        <span class="small"><span class="live-dot"></span>auto-refresh · raw webhooks received</span>
+      </h2>
+      <div class="info-banner" id="notif-banner">
+        <strong>No webhooks arriving?</strong> D-Money calls
+        <code>PLATFORM_BASE_URL/payment/notify</code> — currently
+        <code id="banner-platform-url">…</code>.
+        For local testing, run <code>ngrok http 8000</code> and set
+        <code>PLATFORM_BASE_URL=https://&lt;ngrok&gt;.ngrok.io</code> in <code>.env</code>, then restart the server.
+      </div>
+      <div id="notif-list">Loading…</div>
+      <div id="notif-detail" style="margin-top:14px;"></div>
+    </div>
+
+    <!-- Webhook deliveries -->
+    <div id="view-hooks" class="card hidden">
+      <h2>Webhook Deliveries
+        <span class="small"><span class="live-dot"></span>auto-refresh · forwarded to third-party notify_url</span>
+      </h2>
+      <div id="hooks-list">Loading…</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const API = (() => {
+    const h = location.hostname;
+    if (!h || h === "localhost" || h === "127.0.0.1") return "http://localhost:8000";
+    return location.origin;
+  })();
+
+  let jwt = localStorage.getItem("admin_jwt");
+
+  function showAuthTab(t) {
+    document.getElementById("tab-login").classList.toggle("active", t==="login");
+    document.getElementById("tab-register").classList.toggle("active", t==="register");
+    document.getElementById("login-form").classList.toggle("hidden", t!=="login");
+    document.getElementById("register-form").classList.toggle("hidden", t!=="register");
+    document.getElementById("auth-alert").innerHTML = "";
+  }
+
+  function showAlert(target, type, msg) {
+    document.getElementById(target).innerHTML =
+      `<div class="alert ${type}">${msg}</div>`;
+  }
+
+  async function api(path, opts = {}) {
+    const headers = opts.headers || {};
+    headers["Content-Type"] = "application/json";
+    if (jwt) headers["Authorization"] = "Bearer " + jwt;
+    const res = await fetch(API + path, { ...opts, headers });
+    let body = null;
+    try { body = await res.json(); } catch {}
+    if (!res.ok) throw new Error((body && body.detail) || ("HTTP " + res.status));
+    return body;
+  }
+
+  async function doLogin() {
+    const email = document.getElementById("li-email").value.trim();
+    const password = document.getElementById("li-password").value;
+    try {
+      const r = await api("/admin/login", {
+        method: "POST", body: JSON.stringify({ email, password }),
+      });
+      jwt = r.access_token;
+      localStorage.setItem("admin_jwt", jwt);
+      enterDashboard(r.admin);
+    } catch (e) { showAlert("auth-alert", "error", e.message); }
+  }
+
+  async function doRegister() {
+    const email = document.getElementById("r-email").value.trim();
+    const name = document.getElementById("r-name").value.trim();
+    const password = document.getElementById("r-password").value;
+    try {
+      const headers = jwt ? { "Authorization": "Bearer " + jwt } : {};
+      const res = await fetch(API + "/admin/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ email, name, password }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "HTTP " + res.status);
+      jwt = body.access_token;
+      localStorage.setItem("admin_jwt", jwt);
+      enterDashboard(body.admin);
+    } catch (e) { showAlert("auth-alert", "error", e.message); }
+  }
+
+  function logout() {
+    _stopAutoRefresh();
+    _activeTab = null;
+    jwt = null;
+    localStorage.removeItem("admin_jwt");
+    document.getElementById("auth-view").classList.remove("hidden");
+    document.getElementById("dash-view").classList.add("hidden");
+  }
+
+  async function enterDashboard(admin) {
+    document.getElementById("auth-view").classList.add("hidden");
+    document.getElementById("dash-view").classList.remove("hidden");
+    document.getElementById("me-label").textContent =
+      `Signed in as ${admin.email}${admin.name ? " (" + admin.name + ")" : ""}`;
+    // Fetch /health so the Notifications banner can show the real PLATFORM_BASE_URL
+    try {
+      const h = await fetch(API + "/health").then(r => r.json());
+      const el = document.getElementById("banner-platform-url");
+      if (el) el.textContent = h.platform_notify_url || h.platform_base_url || "(not set)";
+    } catch {}
+    showTab("tps");
+  }
+
+  // ── Auto-refresh ────────────────────────────────────────────────
+  // The active tab silently re-fetches its data every REFRESH_MS, so
+  // new webhook notifications / payments / activity entries show up
+  // without anyone having to click Refresh.
+  const REFRESH_MS = 4000;
+  let _refreshTimer = null;
+  let _activeTab    = null;
+
+  function _runForTab(t) {
+    if (t === "tps")   loadTPs();
+    if (t === "pay")   loadPayments();
+    if (t === "act")   loadActivity();
+    if (t === "notif") loadNotifs();
+    if (t === "hooks") loadHooks();
+  }
+
+  function _startAutoRefresh(t) {
+    _stopAutoRefresh();
+    // Only auto-refresh tabs that show live data — skip the "+ New" form
+    if (!["tps","pay","act","notif","hooks"].includes(t)) return;
+    _refreshTimer = setInterval(() => {
+      // Pause while the browser tab is hidden — no point polling
+      if (document.hidden) return;
+      _runForTab(t);
+    }, REFRESH_MS);
+  }
+
+  function _stopAutoRefresh() {
+    if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    // When the user comes back to the tab, fetch immediately so they
+    // see fresh state without waiting for the next poll tick.
+    if (!document.hidden && _activeTab) _runForTab(_activeTab);
+  });
+
+  function showTab(t) {
+    _activeTab = t;
+    ["tps","new","pay","act","notif","hooks"].forEach(k => {
+      document.getElementById("t-" + k).classList.toggle("active", k === t);
+      document.getElementById("view-" + k).classList.toggle("hidden", k !== t);
+    });
+    document.getElementById("alert").innerHTML = "";
+    if (t === "act") populateActTpSelect();
+    _runForTab(t);
+    _startAutoRefresh(t);
+  }
+
+  async function loadTPs() {
+    try {
+      const list = await api("/admin/third-parties");
+      if (!list.length) {
+        document.getElementById("tps-list").innerHTML =
+          '<p class="small">No third parties yet. Add one in the "+ New" tab.</p>';
+        return;
+      }
+      const rows = list.map(tp => `
+        <tr>
+          <td>${tp.id}</td>
+          <td><strong>${escapeHtml(tp.name)}</strong>${tp.company ? `<br><span class="small">${escapeHtml(tp.company)}</span>` : ""}</td>
+          <td><code>${escapeHtml(tp.appid)}</code><br><span class="small">${escapeHtml(tp.merch_code)}</span></td>
+          <td class="small">${escapeHtml(tp.token_preview || "")}</td>
+          <td>${tp.is_active ? '<span class="status-ok">active</span>' : '<span class="status-off">disabled</span>'}</td>
+          <td>
+            <button class="secondary" onclick="viewTPActivity(${tp.id})">Activity</button>
+            <button class="secondary" onclick="rotate(${tp.id})">Rotate Token</button>
+            <button class="danger" onclick="delTP(${tp.id})">Delete</button>
+          </td>
+        </tr>`).join("");
+      document.getElementById("tps-list").innerHTML = `
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>App ID / Merch</th><th>Token</th><th>Status</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    } catch (e) {
+      if (String(e.message).includes("401")) logout();
+      showAlert("alert","error", e.message);
+    }
+  }
+
+  async function createTP() {
+    const body = {
+      name:        document.getElementById("tp-name").value.trim(),
+      company:     document.getElementById("tp-company").value.trim() || null,
+      email:       document.getElementById("tp-email").value.trim() || null,
+      phone:       document.getElementById("tp-phone").value.trim() || null,
+      appid:       document.getElementById("tp-appid").value.trim(),
+      app_key:     document.getElementById("tp-appkey").value.trim(),
+      app_secret:  document.getElementById("tp-appsecret").value,
+      private_key: document.getElementById("tp-privkey").value.trim(),
+      merch_code:  document.getElementById("tp-merch").value.trim(),
+      business_type: document.getElementById("tp-biztype").value.trim() || "OnlineMerchant",
+      dmoney_base_url:          document.getElementById("tp-baseurl").value.trim(),
+      dmoney_query_base_url:    document.getElementById("tp-queryurl").value.trim() || null,
+      dmoney_checkout_base_url: document.getElementById("tp-checkouturl").value.trim() || null,
+      notify_url:   document.getElementById("tp-notify").value.trim(),
+      redirect_url: document.getElementById("tp-redirect").value.trim(),
+    };
+    try {
+      const r = await api("/admin/third-parties", { method: "POST", body: JSON.stringify(body) });
+      _tpCache = [];   // invalidate cached list used by Activity filter
+      showAlert("alert","success",
+        `✅ Third party <b>${escapeHtml(r.name)}</b> created. Copy the API token NOW — it won't be shown again:
+         <div class="token-box">${escapeHtml(r.api_token)}</div>`);
+      // clear form
+      ["tp-name","tp-company","tp-email","tp-phone","tp-appid","tp-appkey","tp-appsecret",
+       "tp-privkey","tp-merch","tp-notify","tp-redirect","tp-queryurl","tp-checkouturl"].forEach(id => {
+        document.getElementById(id).value = "";
+      });
+    } catch (e) { showAlert("alert","error", e.message); }
+  }
+
+  async function delTP(id) {
+    if (!confirm("Disable this third party? They won't be able to use their API token anymore.")) return;
+    try {
+      await api(`/admin/third-parties/${id}`, { method: "DELETE" });
+      showAlert("alert","success","Third party disabled.");
+      loadTPs();
+    } catch (e) { showAlert("alert","error", e.message); }
+  }
+
+  async function rotate(id) {
+    if (!confirm("Rotate this third party's API token? The current token will stop working immediately.")) return;
+    try {
+      const r = await api(`/admin/third-parties/${id}/rotate-token`, { method: "POST" });
+      showAlert("alert","success",
+        `🔑 New token (copy now, won't be shown again):
+         <div class="token-box">${escapeHtml(r.api_token)}</div>`);
+    } catch (e) { showAlert("alert","error", e.message); }
+  }
+
+  async function loadPayments() {
+    try {
+      const list = await api("/admin/payments");
+      if (!list.length) {
+        document.getElementById("pay-list").innerHTML = '<p class="small">No payments yet.</p>';
+        return;
+      }
+      const rows = list.map(p => `
+        <tr>
+          <td>${p.id}</td>
+          <td>${p.third_party_id}</td>
+          <td><code>${escapeHtml(p.order_id)}</code></td>
+          <td>${escapeHtml(p.title)}</td>
+          <td>${p.amount} ${escapeHtml(p.currency)}</td>
+          <td><span class="badge ${escapeHtml(p.status)}">${escapeHtml(p.status)}</span></td>
+          <td class="small">${new Date(p.created_at).toLocaleString()}</td>
+        </tr>`).join("");
+      document.getElementById("pay-list").innerHTML = `
+        <table>
+          <thead><tr><th>ID</th><th>TP</th><th>Order</th><th>Title</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    } catch (e) { showAlert("alert","error", e.message); }
+  }
+
+  async function loadHooks() {
+    try {
+      const list = await api("/admin/webhooks/deliveries");
+      if (!list.length) {
+        document.getElementById("hooks-list").innerHTML = '<p class="small">No webhook deliveries yet.</p>';
+        return;
+      }
+      const rows = list.map(d => `
+        <tr>
+          <td>${d.id}</td>
+          <td>${d.third_party_id}</td>
+          <td><code class="small">${escapeHtml(d.target_url)}</code></td>
+          <td>${d.attempt}</td>
+          <td>${d.status_code ?? "—"}</td>
+          <td>${d.delivered ? '<span class="status-ok">✓</span>' : '<span class="status-off">✗</span>'}</td>
+          <td class="small">${d.error ? escapeHtml(d.error).slice(0,120) : ""}</td>
+          <td class="small">${new Date(d.created_at).toLocaleString()}</td>
+        </tr>`).join("");
+      document.getElementById("hooks-list").innerHTML = `
+        <table>
+          <thead><tr><th>ID</th><th>TP</th><th>Target</th><th>Attempt</th><th>HTTP</th><th>OK</th><th>Error</th><th>At</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    } catch (e) { showAlert("alert","error", e.message); }
+  }
+
+  // ── Activity tab ───────────────────────────────────────────────
+  let _tpCache = [];
+  async function populateActTpSelect() {
+    try {
+      if (!_tpCache.length) _tpCache = await api("/admin/third-parties");
+      const sel = document.getElementById("act-tp");
+      // Preserve current selection
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All</option>' +
+        _tpCache.map(tp =>
+          `<option value="${tp.id}">${escapeHtml(tp.name)} (#${tp.id})</option>`
+        ).join("");
+      sel.value = cur;
+    } catch {}
+  }
+
+  function resetActFilters() {
+    document.getElementById("act-tp").value = "";
+    document.getElementById("act-action").value = "";
+    loadActivity();
+  }
+
+  async function loadActivity() {
+    const params = new URLSearchParams();
+    const tpId = document.getElementById("act-tp").value;
+    const action = document.getElementById("act-action").value;
+    if (tpId)   params.set("third_party_id", tpId);
+    if (action) params.set("action", action);
+    params.set("limit", "200");
+    try {
+      const r = await api("/admin/activity?" + params.toString());
+      if (!r.items.length) {
+        document.getElementById("act-list").innerHTML =
+          '<p class="small">No activity yet matching the selected filters.</p>';
+        return;
+      }
+      const rows = r.items.map(renderActivityRow).join("");
+      document.getElementById("act-list").innerHTML = `
+        <p class="small" style="margin-bottom:6px;">Showing ${r.items.length} of ${r.total} entries</p>
+        <table>
+          <thead><tr>
+            <th>When</th><th>Actor</th><th>TP</th><th>Action</th>
+            <th>Order</th><th>Description</th><th>IP</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    } catch (e) {
+      showAlert("alert","error", e.message);
+    }
+  }
+
+  function renderActivityRow(a) {
+    const actor = a.actor_type + (a.actor_id ? `#${a.actor_id}` : "");
+    const meta  = a.metadata ? `<br><span class="small">${escapeHtml(JSON.stringify(a.metadata))}</span>` : "";
+    return `<tr>
+      <td class="small">${new Date(a.created_at).toLocaleString()}</td>
+      <td class="small">${escapeHtml(actor)}</td>
+      <td>${a.third_party_id ?? "—"}</td>
+      <td><code class="small">${escapeHtml(a.action)}</code></td>
+      <td class="small">${a.order_id ? `<code>${escapeHtml(a.order_id)}</code>` : "—"}</td>
+      <td class="small">${escapeHtml(a.description || "")}${meta}</td>
+      <td class="small">${escapeHtml(a.ip_address || "")}</td>
+    </tr>`;
+  }
+
+  async function viewTPActivity(tpId) {
+    await populateActTpSelect();
+    document.getElementById("act-tp").value = String(tpId);
+    document.getElementById("act-action").value = "";
+    showTab("act");
+  }
+
+  // ── Notifications tab (raw D-Money webhook payloads) ─────────────
+  async function loadNotifs() {
+    document.getElementById("notif-detail").innerHTML = "";
+    try {
+      const r = await api("/admin/notifications?limit=100");
+      if (!r.items.length) {
+        document.getElementById("notif-list").innerHTML =
+          '<p class="small">No D-Money notifications received yet.</p>';
+        return;
+      }
+      const rows = r.items.map(n => `
+        <tr>
+          <td>${n.id}</td>
+          <td>${n.third_party_id ?? "—"}</td>
+          <td><code class="small">${escapeHtml(n.merch_order_id || "")}</code></td>
+          <td><code class="small">${escapeHtml(n.payment_order_id || "")}</code></td>
+          <td><span class="badge ${n.trade_status === 'PAY_SUCCESS' || n.trade_status === 'COMPLETED' ? 'PAID' : 'PENDING'}">${escapeHtml(n.trade_status || "")}</span></td>
+          <td>${escapeHtml(n.total_amount || "")} ${escapeHtml(n.trans_currency || "")}</td>
+          <td class="small">${new Date(n.received_at).toLocaleString()}</td>
+          <td><button class="secondary" onclick="viewNotifDetail(${n.id})">View</button></td>
+        </tr>`).join("");
+      document.getElementById("notif-list").innerHTML = `
+        <p class="small">Showing ${r.items.length} of ${r.total} notifications</p>
+        <table>
+          <thead><tr>
+            <th>ID</th><th>TP</th><th>Order</th><th>Payment Order</th>
+            <th>Status</th><th>Amount</th><th>Received</th><th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    } catch (e) {
+      showAlert("alert", "error", e.message);
+    }
+  }
+
+  async function viewNotifDetail(id) {
+    try {
+      const d = await api(`/admin/notifications/${id}`);
+      const n = d.notification;
+      const dels = d.deliveries.map(x => `
+        <tr>
+          <td>${x.attempt}</td>
+          <td class="small"><code>${escapeHtml(x.target_url)}</code></td>
+          <td>${x.status_code ?? "—"}</td>
+          <td>${x.delivered ? '<span class="status-ok">✓</span>' : '<span class="status-off">✗</span>'}</td>
+          <td class="small">${new Date(x.created_at).toLocaleString()}</td>
+        </tr>
+        <tr><td colspan="5">
+          <details><summary class="small">Forwarded payload (what we sent to the TP)</summary>
+          <pre style="background:#1f2937;color:#d1fae5;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;">${escapeHtml(JSON.stringify(x.forwarded_payload || x.request_body, null, 2))}</pre>
+          </details>
+          ${x.response_body ? `<details><summary class="small">TP response (HTTP ${x.status_code})</summary>
+            <pre style="background:#f3f4f6;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;">${escapeHtml(x.response_body)}</pre></details>` : ""}
+        </td></tr>
+      `).join("");
+      document.getElementById("notif-detail").innerHTML = `
+        <div class="card" style="border:1.5px solid #4f46e5;">
+          <h2>Notification #${n.id}</h2>
+          <table>
+            <tr><th>Order ID</th><td><code>${escapeHtml(n.merch_order_id || "")}</code></td></tr>
+            <tr><th>Payment Order ID</th><td><code>${escapeHtml(n.payment_order_id || "")}</code></td></tr>
+            <tr><th>App ID / Merch Code</th><td><code>${escapeHtml(n.appid || "")}</code> / <code>${escapeHtml(n.merch_code || "")}</code></td></tr>
+            <tr><th>Trade Status</th><td><strong>${escapeHtml(n.trade_status || "")}</strong></td></tr>
+            <tr><th>Amount</th><td>${escapeHtml(n.total_amount || "")} ${escapeHtml(n.trans_currency || "")}</td></tr>
+            <tr><th>Notify Time</th><td>${escapeHtml(n.notify_time || "")}</td></tr>
+            <tr><th>Trans End Time</th><td>${escapeHtml(n.trans_end_time || "")}</td></tr>
+            <tr><th>Callback Info</th><td>${escapeHtml(n.callback_info || "")}</td></tr>
+            <tr><th>Sign Type</th><td>${escapeHtml(n.sign_type || "")}</td></tr>
+            <tr><th>Received At</th><td class="small">${new Date(n.received_at).toLocaleString()}</td></tr>
+          </table>
+          <h2 style="margin-top:14px;">Raw D-Money payload</h2>
+          <pre style="background:#1f2937;color:#fde68a;padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;">${escapeHtml(JSON.stringify(n.raw_payload, null, 2))}</pre>
+          <h2 style="margin-top:14px;">Forward attempts (${d.deliveries.length})</h2>
+          <table>
+            <thead><tr><th>Attempt</th><th>Target</th><th>HTTP</th><th>OK</th><th>At</th></tr></thead>
+            <tbody>${dels}</tbody>
+          </table>
+        </div>`;
+    } catch (e) {
+      showAlert("alert", "error", e.message);
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    })[c]);
+  }
+
+  // Try auto-login
+  (async () => {
+    if (!jwt) return;
+    try {
+      const me = await api("/admin/me");
+      enterDashboard(me);
+    } catch {
+      logout();
+    }
+  })();
+</script>
+</body>
+</html>
