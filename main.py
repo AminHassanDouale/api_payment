@@ -514,7 +514,21 @@ def _tp_to_public(tp: ThirdParty) -> dict:
 # System
 # ──────────────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["System"])
-def root():
+def root(request: Request):
+    # D-Money's TEST sandbox redirects the buyer's browser to whichever
+    # URL is configured on their merchant dashboard — sometimes that's
+    # the root of our domain rather than /payment/notify. If the redirect
+    # has D-Money's payment fields in the query string, forward to the
+    # webhook handler so the status update + forwarding still happen.
+    qs = request.url.query
+    params = request.query_params
+    if "trade_status" in params and "merch_order_id" in params:
+        logger.info(
+            f"D-Money redirect intercepted at '/' for order={params.get('merch_order_id')} "
+            f"status={params.get('trade_status')} — forwarding to /payment/notify"
+        )
+        return RedirectResponse(url=f"/payment/notify?{qs}", status_code=303)
+
     return {
         "service": "D-Money Multi-Tenant Payment API",
         "version": "2.0.0",
