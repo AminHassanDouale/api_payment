@@ -26,9 +26,10 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import requests
@@ -221,6 +222,86 @@ def _migrate_add_missing_columns():
                 logger.warning(f"Migration skipped ({stmt}): {e}")
 
 
+POLL_INTERVAL_SEC = int(os.getenv("PENDING_POLL_INTERVAL_SEC", "15"))
+POLL_MIN_AGE_SEC  = int(os.getenv("PENDING_POLL_MIN_AGE_SEC",  "30"))
+POLL_MAX_AGE_HRS  = int(os.getenv("PENDING_POLL_MAX_AGE_HRS",  "24"))
+
+
+def _poll_pending_payments_loop():
+    """Background thread that reconciles PENDING payments against D-Money.
+
+    D-Money's TEST sandbox doesn't always POST a server-side webhook, so we
+    catch up by calling queryOrder for every PENDING payment older than
+    POLL_MIN_AGE_SEC. Idempotent: re-running a queryOrder on a PAID order
+    is a no-op.
+    """
+    logger.info(
+        f"Pending-payment poller started "
+        f"(interval={POLL_INTERVAL_SEC}s, min_age={POLL_MIN_AGE_SEC}s, "
+        f"max_age={POLL_MAX_AGE_HRS}h)"
+    )
+    # Stagger workers so they don't all hit D-Money at the same instant
+    time.sleep(POLL_INTERVAL_SEC * (1 + (os.getpid() % 3) / 10))
+
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                now    = datetime.now(timezone.utc)
+                cutoff = now - timedelta(seconds=POLL_MIN_AGE_SEC)
+                floor  = now - timedelta(hours=POLL_MAX_AGE_HRS)
+                pending = (
+                    db.query(Payment)
+                    .filter(
+                        Payment.status == "PENDING",
+                        Payment.created_at < cutoff,
+                        Payment.created_at > floor,
+                    )
+                    .order_by(Payment.id.desc())
+                    .limit(20)
+                    .all()
+                )
+                for p in pending:
+                    tp = db.query(ThirdParty).filter_by(
+                        id=p.third_party_id, is_active=True
+                    ).first()
+                    if not tp:
+                        continue
+                    try:
+                        gateway = DmoneyPaymentGateway.from_third_party(tp, decrypt)
+                        data = gateway.query_order(merch_order_id=p.merch_order_id)
+                        biz = data.get("biz_content") or {}
+                        if isinstance(biz, str):
+                            try: biz = json.loads(biz)
+                            except Exception: biz = {}
+                        raw_ts = biz.get("trade_status") or ""
+                        new_status = _normalize_status(raw_ts)
+                        if (new_status and new_status != "PENDING"
+                                and new_status != p.status):
+                            old = p.status
+                            p.status = new_status
+                            log_activity(
+                                db, action=Actions.PAYMENT_STATUS_CHANGED,
+                                third_party_id=tp.id, actor_type="system",
+                                order_id=p.merch_order_id,
+                                description=f"Status {old} → {new_status} (poller)",
+                                metadata={"from": old, "to": new_status,
+                                          "source": "poll", "raw_trade_status": raw_ts},
+                            )
+                            db.commit()
+                            logger.info(
+                                f"Poll reconciled {p.merch_order_id}: {old} → {new_status}"
+                            )
+                    except Exception as e:
+                        logger.debug(f"Poll skip {p.merch_order_id}: {e}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Pending-poll loop error: {e}")
+
+        time.sleep(POLL_INTERVAL_SEC)
+
+
 @app.on_event("startup")
 def startup():
     # With --workers >1, several processes race on create_all().
@@ -237,6 +318,10 @@ def startup():
     with engine.connect() as conn:
         conn.exec_driver_sql("SELECT 1")
     logger.info(f"Platform ready (env={_ENV}) notify={PLATFORM_NOTIFY_URL}")
+
+    # Background reconciler — keeps PENDING payments fresh even when
+    # D-Money never POSTs the webhook (common in TEST sandboxes).
+    threading.Thread(target=_poll_pending_payments_loop, daemon=True).start()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
