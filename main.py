@@ -181,6 +181,20 @@ async def log_requests(request: Request, call_next):
     return resp
 
 
+def _is_already_exists(err: Exception) -> bool:
+    """Detect MySQL/SQLite 'object already exists' errors so concurrent
+    workers don't all crash on first boot."""
+    msg = str(err).lower()
+    return (
+        "already exists" in msg
+        or "duplicate column" in msg
+        or "duplicate key name" in msg
+        or "(1050," in msg          # MySQL: table already exists
+        or "(1060," in msg          # MySQL: duplicate column
+        or "(1061," in msg          # MySQL: duplicate key/index
+    )
+
+
 def _migrate_add_missing_columns():
     """Light migration: add columns we introduced after first deploy.
     SQLAlchemy.create_all only creates missing TABLES, not missing COLUMNS."""
@@ -201,12 +215,24 @@ def _migrate_add_missing_columns():
                 conn.execute(text(stmt))
             logger.info(f"Migration: {stmt}")
         except Exception as e:
-            logger.warning(f"Migration skipped ({stmt}): {e}")
+            if _is_already_exists(e):
+                logger.info(f"Migration already applied: {stmt}")
+            else:
+                logger.warning(f"Migration skipped ({stmt}): {e}")
 
 
 @app.on_event("startup")
 def startup():
-    Base.metadata.create_all(bind=engine)
+    # With --workers >1, several processes race on create_all().
+    # The loser gets "table already exists" (MySQL 1050) and would crash —
+    # treat that as a benign no-op since the table is there either way.
+    try:
+        Base.metadata.create_all(bind=engine, checkfirst=True)
+    except Exception as e:
+        if _is_already_exists(e):
+            logger.info("Tables already exist (concurrent worker startup) — continuing")
+        else:
+            raise
     _migrate_add_missing_columns()
     with engine.connect() as conn:
         conn.exec_driver_sql("SELECT 1")
