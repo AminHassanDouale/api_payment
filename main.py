@@ -1669,24 +1669,37 @@ def _process_dmoney_notification(body: dict, request: Request, bg: BackgroundTas
         db.refresh(notif)
 
         if tp and tp.notify_url:
-            forward_payload = {
-                "order_id":         merch_order_id,
-                "status":           canonical,
-                "amount":           body.get("total_amount"),
-                "currency":         body.get("trans_currency"),
-                "trade_status":     raw_status,
-                "trans_end_time":   body.get("trans_end_time"),
-                "notify_time":      body.get("notify_time"),
-                "payment_order_id": payment_order_id,
-                "merch_code":       body.get("merch_code"),
-                "callback_info":    body.get("callback_info"),
-                "appid":            appid,
-                "received_at":      datetime.now(timezone.utc).isoformat(),
-            }
-            bg.add_task(
-                _forward_webhook_task,
-                notif.id, tp.id, tp.notify_url, forward_payload,
-            )
+            # Loop guard: skip the forward POST when the TP's notify_url
+            # is the same platform URL we already serve. Without this
+            # every D-Money hit produces a self-POST that shows up as
+            # `python-requests/2.31.0` in the access log and confuses
+            # diagnosis ("looks like a real webhook but isn't").
+            tp_url_norm  = tp.notify_url.rstrip("/").split("?")[0]
+            own_url_norm = PLATFORM_NOTIFY_URL.rstrip("/")
+            if tp_url_norm == own_url_norm or tp_url_norm.startswith(own_url_norm + "/"):
+                logger.info(
+                    f"Webhook handler: skip forward for {merch_order_id} — "
+                    f"tp.notify_url ({tp_url_norm}) is the platform itself"
+                )
+            else:
+                forward_payload = {
+                    "order_id":         merch_order_id,
+                    "status":           canonical,
+                    "amount":           body.get("total_amount"),
+                    "currency":         body.get("trans_currency"),
+                    "trade_status":     raw_status,
+                    "trans_end_time":   body.get("trans_end_time"),
+                    "notify_time":      body.get("notify_time"),
+                    "payment_order_id": payment_order_id,
+                    "merch_code":       body.get("merch_code"),
+                    "callback_info":    body.get("callback_info"),
+                    "appid":            appid,
+                    "received_at":      datetime.now(timezone.utc).isoformat(),
+                }
+                bg.add_task(
+                    _forward_webhook_task,
+                    notif.id, tp.id, tp.notify_url, forward_payload,
+                )
         elif not tp:
             logger.warning(f"Webhook for unknown appid={appid} order={merch_order_id} — stored only")
 
