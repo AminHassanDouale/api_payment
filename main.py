@@ -230,13 +230,26 @@ POLL_MAX_AGE_HRS  = int(os.getenv("PENDING_POLL_MAX_AGE_HRS",  "24"))
 
 
 def _reconcile_one_payment(db, p: "Payment") -> str:
-    """Hit D-Money queryOrder for one Payment row and update status if changed.
-    Returns the new status (or the old one if no change). Raises on D-Money error."""
+    """Hit D-Money queryOrder for one Payment row.
+
+    On real status change (PENDING → PAID/FAILED/...):
+      1. Update Payment.status
+      2. Synthesise a PaymentNotification row so the admin UI's
+         Notifications tab shows the event (otherwise the poller path
+         was invisible to that view)
+      3. POST a forwarded payload to the third party's notify_url
+         (unless notify_url IS our own PLATFORM_NOTIFY_URL — that would
+         loop forever)
+    Idempotent: if a notification with the same payment_order_id already
+    exists (because D-Money POSTed it or the browser GET redirect fired),
+    skip step 2 and 3.
+    """
     tp = db.query(ThirdParty).filter_by(
         id=p.third_party_id, is_active=True
     ).first()
     if not tp:
         raise RuntimeError(f"no active TP for tp_id={p.third_party_id}")
+
     gateway = DmoneyPaymentGateway.from_third_party(tp, decrypt)
     data = gateway.query_order(merch_order_id=p.merch_order_id)
     biz = data.get("biz_content") or {}
@@ -249,19 +262,97 @@ def _reconcile_one_payment(db, p: "Payment") -> str:
         f"queryOrder {p.merch_order_id}: D-Money trade_status={raw_ts!r} "
         f"→ canonical={new_status} (was {p.status})"
     )
-    if new_status and new_status != "PENDING" and new_status != p.status:
-        old = p.status
-        p.status = new_status
-        log_activity(
-            db, action=Actions.PAYMENT_STATUS_CHANGED,
-            third_party_id=tp.id, actor_type="system",
-            order_id=p.merch_order_id,
-            description=f"Status {old} → {new_status} (poller)",
-            metadata={"from": old, "to": new_status,
-                      "source": "poll", "raw_trade_status": raw_ts},
+
+    if not new_status or new_status == "PENDING" or new_status == p.status:
+        return p.status
+
+    old = p.status
+    p.status = new_status
+    payment_order_id = biz.get("payment_order_id")
+
+    # Was this already notified through the POST or GET-redirect path?
+    already_notified = False
+    if payment_order_id:
+        already_notified = bool(
+            db.query(PaymentNotification)
+              .filter_by(payment_order_id=payment_order_id)
+              .first()
         )
+
+    log_activity(
+        db, action=Actions.PAYMENT_STATUS_CHANGED,
+        third_party_id=tp.id, actor_type="system",
+        order_id=p.merch_order_id,
+        description=f"Status {old} → {new_status} (poller)",
+        metadata={"from": old, "to": new_status,
+                  "source": "poll", "raw_trade_status": raw_ts},
+    )
+
+    notif_id_for_forward = None
+    if not already_notified:
+        notif = PaymentNotification(
+            third_party_id   = tp.id,
+            merch_order_id   = p.merch_order_id,
+            payment_order_id = payment_order_id,
+            appid            = tp.appid,
+            notify_time      = biz.get("notify_time") or biz.get("trans_end_time"),
+            merch_code       = tp.merch_code,
+            total_amount     = biz.get("total_amount") or str(p.total_amount),
+            trans_currency   = biz.get("trans_currency") or p.currency,
+            trade_status     = raw_ts.upper(),
+            trans_end_time   = biz.get("trans_end_time"),
+            callback_info    = biz.get("callback_info") or p.callback_info,
+            sign             = biz.get("sign"),
+            sign_type        = biz.get("sign_type"),
+            raw_payload      = json.dumps({"_source": "poller", **biz}),
+            processed        = True,
+        )
+        db.add(notif)
         db.commit()
-        logger.info(f"Poller flipped {p.merch_order_id}: {old} → {new_status}")
+        db.refresh(notif)
+        notif_id_for_forward = notif.id
+        logger.info(f"Poller created notification id={notif.id} for {p.merch_order_id}")
+    else:
+        db.commit()
+        logger.info(f"Poller flipped {p.merch_order_id} but notification already existed — no forward")
+
+    # Forward to third party (unless their notify_url is our own — loop guard)
+    if notif_id_for_forward and tp.notify_url:
+        tp_url = tp.notify_url.rstrip("/")
+        own_url = PLATFORM_NOTIFY_URL.rstrip("/")
+        if tp_url == own_url:
+            logger.info(
+                f"Poller: skip forward for {p.merch_order_id} — "
+                f"TP notify_url equals PLATFORM_NOTIFY_URL ({tp_url})"
+            )
+        else:
+            forward_payload = {
+                "order_id":         p.merch_order_id,
+                "status":           new_status,
+                "amount":           biz.get("total_amount") or str(p.total_amount),
+                "currency":         biz.get("trans_currency") or p.currency,
+                "trade_status":     raw_ts,
+                "trans_end_time":   biz.get("trans_end_time"),
+                "notify_time":      biz.get("notify_time"),
+                "payment_order_id": payment_order_id,
+                "merch_code":       tp.merch_code,
+                "callback_info":    biz.get("callback_info") or p.callback_info,
+                "appid":            tp.appid,
+                "received_at":      datetime.now(timezone.utc).isoformat(),
+                "_source":          "poller",
+            }
+            # Run the forwarder in its own thread so the retry/backoff
+            # doesn't block this poll tick (or the next 20 reconciles).
+            threading.Thread(
+                target=_forward_webhook_task,
+                args=(notif_id_for_forward, tp.id, tp.notify_url, forward_payload),
+                daemon=True,
+            ).start()
+            logger.info(
+                f"Poller forwarding {p.merch_order_id} to {tp.notify_url} (background)"
+            )
+
+    logger.info(f"Poller flipped {p.merch_order_id}: {old} → {new_status}")
     return p.status
 
 
