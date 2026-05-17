@@ -1346,15 +1346,20 @@ def tp_create_payment(
         logger.error(f"Failed to build gateway for tp={tp.id}: {e}")
         raise HTTPException(500, "Gateway misconfigured for this third party")
 
+    # Pre-generate the order id so we can pass a per-order notify_url to
+    # D-Money in the preorder, matching the format D-Money's production
+    # docs sample uses:  https://shop.../webhooks/payment/<merch_order_id>
+    final_order_id = body.order_id or gateway._generate_order_id()
+    per_order_notify_url = f"{PLATFORM_NOTIFY_URL}/{final_order_id}"
+
     try:
-        # D-Money calls OUR /payment/notify; we forward to tp.notify_url
         result = gateway.create_payment(
             amount        = total,
             title         = title,
-            order_id      = body.order_id,
+            order_id      = final_order_id,
             currency      = body.currency,
             timeout       = body.timeout,
-            notify_url    = PLATFORM_NOTIFY_URL,
+            notify_url    = per_order_notify_url,
             redirect_url  = body.redirect_url or tp.redirect_url,
             callback_info = body.callback_info,
             language      = body.language,
@@ -1694,11 +1699,37 @@ def _process_dmoney_notification(body: dict, request: Request, bg: BackgroundTas
     return canonical
 
 
+async def _read_raw_body_safe(request: Request) -> bytes:
+    """Read the raw body once so we can log it even if JSON parsing fails."""
+    try:
+        return await request.body()
+    except Exception:
+        return b""
+
+
+def _log_inbound_webhook(request: Request, raw: bytes, order_id_in_path: Optional[str] = None):
+    """Loud one-line log of every webhook hit so D-Money calls are visible
+    in journalctl without grepping nginx separately."""
+    ua  = request.headers.get("user-agent", "-")
+    ip  = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() \
+          or (request.client.host if request.client else "-")
+    ct  = request.headers.get("content-type", "-")
+    preview = raw[:500].decode("utf-8", errors="replace") if raw else ""
+    logger.info(
+        f"WEBHOOK in: method={request.method} path={request.url.path} "
+        f"ip={ip} ua={ua!r} ct={ct} order_id_path={order_id_in_path} "
+        f"body_len={len(raw)} body_preview={preview!r}"
+    )
+
+
 @app.post("/payment/notify", tags=["Webhooks"])
 async def payment_notify_post(request: Request, bg: BackgroundTasks):
-    """D-Money production: POST a JSON body to this endpoint."""
+    """D-Money production: POSTs a JSON body here when notify_url has no
+    order suffix. Returns the documented `{code,msg,result}` ack."""
+    raw = await _read_raw_body_safe(request)
+    _log_inbound_webhook(request, raw)
     try:
-        body = await request.json()
+        body = json.loads(raw) if raw else {}
     except Exception:
         return _DMONEY_ACK
     body["_transport"] = "POST"
@@ -1706,15 +1737,60 @@ async def payment_notify_post(request: Request, bg: BackgroundTasks):
     return _DMONEY_ACK
 
 
+@app.post("/payment/notify/{order_id}", tags=["Webhooks"])
+async def payment_notify_post_with_order(
+    order_id: str,
+    request:  Request,
+    bg:       BackgroundTasks,
+):
+    """D-Money POSTs here when we passed a per-order notify_url
+    (matches the documented sample shape: .../payment/notify/<merch_order_id>).
+    Body fields are processed identically; the order_id from the URL is
+    used as a fallback if merch_order_id is missing in the body."""
+    raw = await _read_raw_body_safe(request)
+    _log_inbound_webhook(request, raw, order_id_in_path=order_id)
+    try:
+        body = json.loads(raw) if raw else {}
+    except Exception:
+        return _DMONEY_ACK
+    body["_transport"] = "POST"
+    body["_url_order_id"] = order_id
+    if not body.get("merch_order_id"):
+        body["merch_order_id"] = order_id
+    _process_dmoney_notification(body, request, bg)
+    return _DMONEY_ACK
+
+
 @app.get("/payment/notify", tags=["Webhooks"])
 async def payment_notify_get(request: Request, bg: BackgroundTasks):
     """D-Money TEST sandbox redirects the user's browser HERE with payment
-    data as query-string params (GET). We process the data exactly like the
-    POST version, then send the buyer to a friendly success/failed page."""
+    data as query-string params (GET). Processes identically to POST, then
+    sends the buyer to a friendly success/failed page."""
+    _log_inbound_webhook(request, b"")
     body = dict(request.query_params)
     body["_transport"] = "GET"
     canonical = _process_dmoney_notification(body, request, bg)
+    if canonical == "PAID":
+        return RedirectResponse(url="/payment/success", status_code=303)
+    if canonical in ("FAILED", "CANCELLED", "EXPIRED"):
+        return RedirectResponse(url="/payment/failed", status_code=303)
+    return RedirectResponse(url="/payment/success", status_code=303)
 
+
+@app.get("/payment/notify/{order_id}", tags=["Webhooks"])
+async def payment_notify_get_with_order(
+    order_id: str,
+    request:  Request,
+    bg:       BackgroundTasks,
+):
+    """Browser-redirect equivalent of the per-order POST route."""
+    _log_inbound_webhook(request, b"", order_id_in_path=order_id)
+    body = dict(request.query_params)
+    body["_transport"] = "GET"
+    body["_url_order_id"] = order_id
+    if not body.get("merch_order_id"):
+        body["merch_order_id"] = order_id
+    canonical = _process_dmoney_notification(body, request, bg)
     if canonical == "PAID":
         return RedirectResponse(url="/payment/success", status_code=303)
     if canonical in ("FAILED", "CANCELLED", "EXPIRED"):
