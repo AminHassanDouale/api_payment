@@ -201,7 +201,15 @@
         <code>PLATFORM_BASE_URL=https://&lt;ngrok&gt;.ngrok.io</code> in <code>.env</code>, then restart the server.
       </div>
       <div id="notif-list">Loading…</div>
-      <div id="notif-detail" style="margin-top:14px;"></div>
+    </div>
+
+    <!-- Notification detail modal — fixed-position overlay, immune to auto-refresh -->
+    <div id="notif-modal" onclick="if(event.target===this) closeNotifDetail()" style="
+      display:none; position:fixed; top:0; left:0; width:100vw; height:100vh;
+      background:rgba(15,23,42,0.55); z-index:1000; overflow-y:auto; padding:24px;">
+      <div id="notif-modal-content" style="
+        background:#fff; max-width:880px; margin:0 auto;
+        padding:24px; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.25);"></div>
     </div>
 
     <!-- Webhook deliveries -->
@@ -598,13 +606,29 @@
 
   function closeNotifDetail() {
     _openNotifId = null;
-    document.getElementById("notif-detail").innerHTML = "";
+    const m = document.getElementById("notif-modal");
+    if (m) m.style.display = "none";
+    document.body.style.overflow = "";
   }
+
+  // Close modal on Escape key
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && _openNotifId !== null) closeNotifDetail();
+  });
 
   async function viewNotifDetail(id) {
     _openNotifId = id;
+    const modal = document.getElementById("notif-modal");
+    const content = document.getElementById("notif-modal-content");
+    content.innerHTML =
+      '<p class="small" style="text-align:center;padding:40px;">Loading notification #' + id + '…</p>';
+    modal.style.display = "block";
+    document.body.style.overflow = "hidden";   // lock background scroll
+
     try {
       const d = await api(`/admin/notifications/${id}`);
+      // Bail if user closed or switched while we were fetching
+      if (_openNotifId !== id) return;
       const n = d.notification;
       const dels = d.deliveries.map(x => `
         <tr>
@@ -622,36 +646,38 @@
             <pre style="background:#f3f4f6;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;">${escapeHtml(x.response_body)}</pre></details>` : ""}
         </td></tr>
       `).join("");
-      // Only render if the user hasn't closed/switched while we were fetching
-      if (_openNotifId !== id) return;
-      document.getElementById("notif-detail").innerHTML = `
-        <div class="card" style="border:1.5px solid #4f46e5;">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <h2 style="margin:0;">Notification #${n.id}</h2>
-            <button class="secondary" onclick="closeNotifDetail()">Close ✕</button>
-          </div>
-          <table style="margin-top:10px;">
-            <tr><th>Order ID</th><td><code>${escapeHtml(n.merch_order_id || "")}</code></td></tr>
-            <tr><th>Payment Order ID</th><td><code>${escapeHtml(n.payment_order_id || "")}</code></td></tr>
-            <tr><th>App ID / Merch Code</th><td><code>${escapeHtml(n.appid || "")}</code> / <code>${escapeHtml(n.merch_code || "")}</code></td></tr>
-            <tr><th>Trade Status</th><td><strong>${escapeHtml(n.trade_status || "")}</strong></td></tr>
-            <tr><th>Amount</th><td>${escapeHtml(n.total_amount || "")} ${escapeHtml(n.trans_currency || "")}</td></tr>
-            <tr><th>Notify Time</th><td>${escapeHtml(n.notify_time || "")}</td></tr>
-            <tr><th>Trans End Time</th><td>${escapeHtml(n.trans_end_time || "")}</td></tr>
-            <tr><th>Callback Info</th><td>${escapeHtml(n.callback_info || "")}</td></tr>
-            <tr><th>Sign Type</th><td>${escapeHtml(n.sign_type || "")}</td></tr>
-            <tr><th>Received At</th><td class="small">${new Date(n.received_at).toLocaleString()}</td></tr>
-          </table>
-          <h2 style="margin-top:14px;">Raw D-Money payload</h2>
-          <pre style="background:#1f2937;color:#fde68a;padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;">${escapeHtml(JSON.stringify(n.raw_payload, null, 2))}</pre>
-          <h2 style="margin-top:14px;">Forward attempts (${d.deliveries.length})</h2>
-          <table>
-            <thead><tr><th>Attempt</th><th>Target</th><th>HTTP</th><th>OK</th><th>At</th></tr></thead>
-            <tbody>${dels}</tbody>
-          </table>
+      content.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h2 style="margin:0;">Notification #${n.id}</h2>
+          <button class="secondary" onclick="closeNotifDetail()">Close ✕</button>
+        </div>
+        <table>
+          <tr><th>Order ID</th><td><code>${escapeHtml(n.merch_order_id || "")}</code></td></tr>
+          <tr><th>Payment Order ID</th><td><code>${escapeHtml(n.payment_order_id || "")}</code></td></tr>
+          <tr><th>App ID / Merch Code</th><td><code>${escapeHtml(n.appid || "")}</code> / <code>${escapeHtml(n.merch_code || "")}</code></td></tr>
+          <tr><th>Trade Status</th><td><strong>${escapeHtml(n.trade_status || "")}</strong></td></tr>
+          <tr><th>Amount</th><td>${escapeHtml(n.total_amount || "")} ${escapeHtml(n.trans_currency || "")}</td></tr>
+          <tr><th>Notify Time</th><td>${escapeHtml(n.notify_time || "")}</td></tr>
+          <tr><th>Trans End Time</th><td>${escapeHtml(n.trans_end_time || "")}</td></tr>
+          <tr><th>Callback Info</th><td>${escapeHtml(n.callback_info || "")}</td></tr>
+          <tr><th>Sign Type</th><td>${escapeHtml(n.sign_type || "")}</td></tr>
+          <tr><th>Received At</th><td class="small">${new Date(n.received_at).toLocaleString()}</td></tr>
+        </table>
+        <h2 style="margin-top:18px;">Raw D-Money payload</h2>
+        <pre style="background:#1f2937;color:#fde68a;padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;">${escapeHtml(JSON.stringify(n.raw_payload, null, 2))}</pre>
+        <h2 style="margin-top:18px;">Forward attempts (${d.deliveries.length})</h2>
+        <table>
+          <thead><tr><th>Attempt</th><th>Target</th><th>HTTP</th><th>OK</th><th>At</th></tr></thead>
+          <tbody>${dels}</tbody>
+        </table>
+        <div style="text-align:right;margin-top:18px;">
+          <button class="secondary" onclick="closeNotifDetail()">Close ✕</button>
         </div>`;
     } catch (e) {
-      showAlert("alert", "error", e.message);
+      content.innerHTML = `<p class="alert error">${escapeHtml(e.message)}</p>
+        <div style="text-align:right;margin-top:14px;">
+          <button class="secondary" onclick="closeNotifDetail()">Close ✕</button>
+        </div>`;
     }
   }
 
