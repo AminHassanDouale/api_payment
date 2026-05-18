@@ -559,8 +559,11 @@
   }
 
   // ── Notifications tab (raw D-Money webhook payloads) ─────────────
+  // Track which notification's detail is open so the 4-second auto-refresh
+  // can keep it open instead of wiping it on every poll tick.
+  let _openNotifId = null;
+
   async function loadNotifs() {
-    document.getElementById("notif-detail").innerHTML = "";
     try {
       const r = await api("/admin/notifications?limit=100");
       if (!r.items.length) {
@@ -593,7 +596,13 @@
     }
   }
 
+  function closeNotifDetail() {
+    _openNotifId = null;
+    document.getElementById("notif-detail").innerHTML = "";
+  }
+
   async function viewNotifDetail(id) {
+    _openNotifId = id;
     try {
       const d = await api(`/admin/notifications/${id}`);
       const n = d.notification;
@@ -613,10 +622,15 @@
             <pre style="background:#f3f4f6;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;">${escapeHtml(x.response_body)}</pre></details>` : ""}
         </td></tr>
       `).join("");
+      // Only render if the user hasn't closed/switched while we were fetching
+      if (_openNotifId !== id) return;
       document.getElementById("notif-detail").innerHTML = `
         <div class="card" style="border:1.5px solid #4f46e5;">
-          <h2>Notification #${n.id}</h2>
-          <table>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 style="margin:0;">Notification #${n.id}</h2>
+            <button class="secondary" onclick="closeNotifDetail()">Close ✕</button>
+          </div>
+          <table style="margin-top:10px;">
             <tr><th>Order ID</th><td><code>${escapeHtml(n.merch_order_id || "")}</code></td></tr>
             <tr><th>Payment Order ID</th><td><code>${escapeHtml(n.payment_order_id || "")}</code></td></tr>
             <tr><th>App ID / Merch Code</th><td><code>${escapeHtml(n.appid || "")}</code> / <code>${escapeHtml(n.merch_code || "")}</code></td></tr>
